@@ -132,6 +132,10 @@ class Llama3Model(ModelBase):
     def _get_mlp_modules(self):
         return torch.nn.ModuleList([block_module.mlp for block_module in self.model_block_modules])
 
+    def _get_post_attn_modules(self):
+        return torch.nn.ModuleList([block_module.post_attention_layernorm for block_module in self.model_block_modules])
+
+
     def _get_orthogonalization_mod_fn(self, direction: Float[Tensor, "d_model"]):
         return functools.partial(orthogonalize_llama3_weights, direction=direction)
     

@@ -19,6 +19,7 @@ class ModelBase(ABC):
         self.model_block_modules = self._get_model_block_modules()
         self.model_attn_modules = self._get_attn_modules()
         self.model_mlp_modules = self._get_mlp_modules()
+        self.model_post_attn_modules = self._get_post_attn_modules()
 
     def del_model(self):
         if hasattr(self, 'model') and self.model is not None:
@@ -54,6 +55,10 @@ class ModelBase(ABC):
 
     @abstractmethod
     def _get_mlp_modules(self):
+        pass
+    
+    @abstractmethod
+    def _get_post_attn_modules(self):
         pass
 
     @abstractmethod

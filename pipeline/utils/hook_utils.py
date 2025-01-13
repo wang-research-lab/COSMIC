@@ -6,6 +6,7 @@ import functools
 from typing import List, Tuple, Callable
 from jaxtyping import Float
 from torch import Tensor
+import pdb
 
 @contextlib.contextmanager
 def add_hooks(
@@ -46,7 +47,7 @@ def get_direction_ablation_input_pre_hook(direction: Tensor):
             activation: Float[Tensor, "batch_size seq_len d_model"] = input[0]
         else:
             activation: Float[Tensor, "batch_size seq_len d_model"] = input
-
+        
         direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
         direction = direction.to(activation) 
         activation -= (activation @ direction).unsqueeze(-1) * direction 
@@ -76,6 +77,17 @@ def get_direction_ablation_output_hook(direction: Tensor):
             return activation
 
     return hook_fn
+
+def get_all_direction_ablation_hooks_2(
+    model_base,
+    direction: List[Float[Tensor, 'd_model']],
+):
+    post_attn_ablation_dir = direction[0]
+    post_mlp_ablation_dir = direction[1]
+    fwd_pre_hooks = [(model_base.model_post_attn_modules[layer], get_direction_ablation_input_pre_hook(direction=post_attn_ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+    fwd_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_output_hook(direction=post_mlp_ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+
+    return fwd_pre_hooks, fwd_hooks
 
 def get_all_direction_ablation_hooks(
     model_base,
@@ -108,7 +120,7 @@ def get_directional_patching_input_pre_hook(direction: Float[Tensor, "d_model"],
             return activation
     return hook_fn
 
-def get_activation_addition_input_pre_hook(vector: Float[Tensor, "d_model"], coeff: Float[Tensor, ""]):
+def get_activation_addition_input_pre_hook(vector: Float[Tensor, "d_model"], coeff: Float[Tensor, ""], bruh: bool=False):
     def hook_fn(module, input):
         nonlocal vector
 
@@ -124,4 +136,23 @@ def get_activation_addition_input_pre_hook(vector: Float[Tensor, "d_model"], coe
             return (activation, *input[1:])
         else:
             return activation
+    return hook_fn
+
+def get_activation_addition_input_post_hook(vector: Float[Tensor, "d_model"], coeff: Float[Tensor, ""]):
+    def hook_fn(module, input, output):
+        nonlocal vector
+
+        if isinstance(output, tuple):
+            activation = output[0]
+            other_outputs = output[1:]
+            
+            vector = vector.to(activation)
+            modified_activation = activation + coeff * vector
+            
+            return (modified_activation,) + other_outputs
+        else:
+            activation = output
+            vector = vector.to(activation)
+            modified_activation = activation + coeff * vector
+            return modified_activation
     return hook_fn
