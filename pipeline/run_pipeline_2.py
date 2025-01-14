@@ -65,7 +65,7 @@ def generate_and_save_candidate_directions(cfg, model_base, harmful_train, harml
     if not os.path.exists(os.path.join(cfg.artifact_path(), 'generate_directions')):
         os.makedirs(os.path.join(cfg.artifact_path(), 'generate_directions'))
 
-    mean_diffs, standard_projection_level = generate_directions(
+    mean_diffs = generate_directions(
         model_base,
         harmful_train,
         harmless_train,
@@ -73,9 +73,9 @@ def generate_and_save_candidate_directions(cfg, model_base, harmful_train, harml
 
     torch.save(mean_diffs, os.path.join(cfg.artifact_path(), 'generate_directions/mean_diffs.pt'))
 
-    return mean_diffs, standard_projection_level
+    return mean_diffs
 
-def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, standard_projection_level):
+def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions):
     """Select and save the direction."""
     if not os.path.exists(os.path.join(cfg.artifact_path(), 'select_direction')):
         os.makedirs(os.path.join(cfg.artifact_path(), 'select_direction'))
@@ -85,7 +85,6 @@ def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candid
         harmful_val,
         harmless_val,
         candidate_directions,
-        standard_projection_level,
         artifact_dir=os.path.join(cfg.artifact_path(), "select_direction")
     )
 
@@ -149,10 +148,10 @@ def run_pipeline(model_path):
     harmful_train, harmless_train, harmful_val, harmless_val = filter_data(cfg, model_base, harmful_train, harmless_train, harmful_val, harmless_val)
 
     # 1. Generate candidate refusal directions
-    candidate_directions, standard_projection_level = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train)
+    candidate_directions = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train)
     
     # 2. Select the most effective refusal direction
-    pos, layer, direction = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, standard_projection_level)
+    pos, layer, direction = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions)
 
     """baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
     ablation_fwd_pre_hooks, ablation_fwd_hooks = get_all_direction_ablation_hooks_2(model_base, direction)

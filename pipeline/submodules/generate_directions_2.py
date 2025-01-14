@@ -79,23 +79,17 @@ def get_mean_diff(model, tokenizer, harmful_instructions, harmless_instructions,
 
     mean_diff: Float[Tensor, "n_dir n_positions n_layers d_model"] = mean_activations_harmful - mean_activations_harmless
 
-    reference_vector = mean_activations_harmless / (mean_activations_harmless.norm(dim=-1, keepdim=True) + 1e-8)
-    print(mean_diff.shape)
-    print(reference_vector.shape)
-    #standard_projection_level: Float[Tensor, "n_dir n_positions n_layers d_model"] = mean_diff - (mean_diff @ reference_vector).unsqueeze(-1) * reference_vector
-    standard_projection_level = None
-    
-    return mean_diff, standard_projection_level
+    return mean_diff
 
 def generate_directions(model_base: ModelBase, harmful_instructions, harmless_instructions, artifact_dir):
     if not os.path.exists(artifact_dir):
         os.makedirs(artifact_dir)
 
-    mean_diffs, standard_projection_level = get_mean_diff(model_base.model, model_base.tokenizer, harmful_instructions, harmless_instructions, model_base.tokenize_instructions_fn, model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)))
+    mean_diffs = get_mean_diff(model_base.model, model_base.tokenizer, harmful_instructions, harmless_instructions, model_base.tokenize_instructions_fn, model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)))
 
     assert mean_diffs.shape == (3, len(model_base.eoi_toks), model_base.model.config.num_hidden_layers, model_base.model.config.hidden_size)
     assert not mean_diffs.isnan().any()
 
     torch.save(mean_diffs, f"{artifact_dir}/mean_diffs.pt")
 
-    return mean_diffs, standard_projection_level
+    return mean_diffs

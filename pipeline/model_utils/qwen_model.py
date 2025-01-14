@@ -10,7 +10,8 @@ from jaxtyping import Int, Float
 import pdb
 
 
-from model_utils.model_base import ModelBase
+from pipeline.utils.utils import get_orthogonalized_matrix
+from pipeline.model_utils.model_base import ModelBase
 
 SAMPLE_SYSTEM_PROMPT = """You are a helpful assistant."""
 
