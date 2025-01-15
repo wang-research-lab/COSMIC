@@ -65,7 +65,7 @@ def generate_and_save_candidate_directions(cfg, model_base, harmful_train, harml
     if not os.path.exists(os.path.join(cfg.artifact_path(), 'generate_directions')):
         os.makedirs(os.path.join(cfg.artifact_path(), 'generate_directions'))
 
-    mean_diffs = generate_directions(
+    mean_diffs, harmless_mean = generate_directions(
         model_base,
         harmful_train,
         harmless_train,
@@ -73,19 +73,21 @@ def generate_and_save_candidate_directions(cfg, model_base, harmful_train, harml
 
     torch.save(mean_diffs, os.path.join(cfg.artifact_path(), 'generate_directions/mean_diffs.pt'))
 
-    return mean_diffs
+    return mean_diffs, harmless_mean
 
-def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions):
+def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean):
     """Select and save the direction."""
     if not os.path.exists(os.path.join(cfg.artifact_path(), 'select_direction')):
         os.makedirs(os.path.join(cfg.artifact_path(), 'select_direction'))
 
-    pos, layer, direction = select_direction(
+    pos, layer, direction, harmless_reference= select_direction(
         model_base,
         harmful_val,
         harmless_val,
         candidate_directions,
-        artifact_dir=os.path.join(cfg.artifact_path(), "select_direction")
+        harmless_mean,
+        artifact_dir=os.path.join(cfg.artifact_path(), "select_direction"),
+        kl_threshold = 5
     )
 
     with open(f'{cfg.artifact_path()}/direction_metadata.json', "w") as f:
@@ -93,7 +95,7 @@ def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candid
 
     torch.save(direction, f'{cfg.artifact_path()}/direction.pt')
 
-    return pos, layer, direction
+    return pos, layer, direction, harmless_reference
 
 def generate_and_save_completions_for_dataset(cfg, model_base, fwd_pre_hooks, fwd_hooks, intervention_label, dataset_name, dataset=None):
     """Generate and save completions for a dataset."""
@@ -148,14 +150,14 @@ def run_pipeline(model_path):
     harmful_train, harmless_train, harmful_val, harmless_val = filter_data(cfg, model_base, harmful_train, harmless_train, harmful_val, harmless_val)
 
     # 1. Generate candidate refusal directions
-    candidate_directions = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train)
+    candidate_directions, harmless_mean = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train)
     
     # 2. Select the most effective refusal direction
-    pos, layer, direction = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions)
+    pos, layer, direction, harmless_reference = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean)
 
-    """baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
-    ablation_fwd_pre_hooks, ablation_fwd_hooks = get_all_direction_ablation_hooks_2(model_base, direction)
-    actadd_fwd_pre_hooks, actadd_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_activation_addition_input_pre_hook(vector=direction[0], coeff=-1.0))], [(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(vector=direction[1], coeff=-1.0))]
+    baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
+    ablation_fwd_pre_hooks, ablation_fwd_hooks = get_all_direction_ablation_hooks_2(model_base, direction, harmless_reference)
+    actadd_fwd_pre_hooks, actadd_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_activation_addition_input_pre_hook(direction=direction[0], coeff=-1.0, reference = harmless_reference[0]))], [(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(vector=direction[1], coeff=-1.0, reference = harmless_reference[1]))]
 
     # 3a. Generate and save completions on harmful evaluation datasets
     for dataset_name in cfg.evaluation_datasets:
@@ -201,8 +203,6 @@ def run_pipeline(model_path):
     # 4b. Evaluate completions and save results on harmless evaluation dataset
     evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
     evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
-
-    """
 
 
 if __name__ == "__main__":
