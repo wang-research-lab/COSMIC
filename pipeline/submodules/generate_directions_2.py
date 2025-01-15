@@ -50,7 +50,7 @@ def get_mean_activations(model, tokenizer, instructions, tokenize_instructions_f
     ]
 
     fwd_pre_hooks += [
-        (block_modules[layer].post_attention_layernorm, 
+        (block_modules[layer].mlp, 
         get_mean_activations_pre_hook(layer=layer, cache=post_attn_mean_activations, n_samples=n_samples, positions=positions))
         for layer in range(n_layers)
     ]
