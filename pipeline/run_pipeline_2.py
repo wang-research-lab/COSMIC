@@ -86,8 +86,7 @@ def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candid
         harmless_val,
         candidate_directions,
         harmless_mean,
-        artifact_dir=os.path.join(cfg.artifact_path(), "select_direction"),
-        kl_threshold = 5
+        artifact_dir=os.path.join(cfg.artifact_path(), "select_direction")
     )
 
     with open(f'{cfg.artifact_path()}/direction_metadata.json', "w") as f:

@@ -158,23 +158,24 @@ def get_activation_addition_input_pre_hook(
         if reference is None:
             reference = torch.zeros_like(direction)
 
-        # Normalize the direction vector
-        direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
         direction = direction.to(activation)
+        
+        # Normalize the direction vector
+        normalized_direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
         reference = reference.to(activation)
 
         # Compute projections
-        proj_v = (activation @ direction).unsqueeze(-1) * direction  # proj_r(v)
-        proj_ref = (reference @ direction).unsqueeze(-1) * direction  # proj_r(r^-)
+        proj_v = (activation @ normalized_direction).unsqueeze(-1) * normalized_direction  # proj_r(v)
+        proj_ref = (reference @ normalized_direction).unsqueeze(-1) * normalized_direction  # proj_r(r^-)
 
         # Apply affine transformation
-        activation = activation - proj_v + proj_ref + coeff * direction
+        modified_activation = activation - proj_v + proj_ref + coeff * direction
 
         # Return modified activation
         if isinstance(input, tuple):
-            return (activation, *input[1:])
+            return (modified_activation, *input[1:])
         else:
-            return activation
+            return modified_activation
 
     return hook_fn
 
@@ -196,14 +197,15 @@ def get_activation_addition_input_post_hook(
             other_outputs = output[1:]
             
 
-            # Normalize the direction vector
-            direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
             direction = direction.to(activation)
+            
+            # Normalize the direction vector
+            normalized_direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
             reference = reference.to(activation)
 
             # Compute projections
-            proj_v = (activation @ direction).unsqueeze(-1) * direction  # proj_r(v)
-            proj_ref = (reference @ direction).unsqueeze(-1) * direction  # proj_r(r^-)
+            proj_v = (activation @ normalized_direction).unsqueeze(-1) * normalized_direction  # proj_r(v)
+            proj_ref = (reference @ normalized_direction).unsqueeze(-1) * normalized_direction  # proj_r(r^-)
 
             # Apply affine transformation
             modified_activation = activation - proj_v + proj_ref + coeff * direction
