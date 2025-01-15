@@ -39,9 +39,11 @@ def add_hooks(
         for h in handles:
             h.remove()
 
-def get_direction_ablation_input_pre_hook(direction: Tensor, reference: Tensor | None = None):
+def get_direction_ablation_input_pre_hook(direction: Tensor, 
+                                          reference: Tensor | None = None, 
+                                          coeff: Tensor| None = None):
     def hook_fn(module, input):
-        nonlocal direction, reference
+        nonlocal direction, reference, coeff
 
         if isinstance(input, tuple):
             activation: Float[Tensor, "batch_size seq_len d_model"] = input[0]
@@ -50,14 +52,17 @@ def get_direction_ablation_input_pre_hook(direction: Tensor, reference: Tensor |
 
         if reference is None:
             reference = torch.zeros_like(direction)
+        if coeff is None:
+            coeff = torch.Tensor([1])
         
         direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
         direction = direction.to(activation)
         reference = reference.to(activation)
+        coeff = coeff.to(activation)
 
         reference_projection = (reference @ direction).unsqueeze(-1) * direction
 
-        activation = activation - (activation @ direction).unsqueeze(-1) * direction + reference_projection
+        activation = activation - coeff * (activation @ direction).unsqueeze(-1) * direction + reference_projection
 
         if isinstance(input, tuple):
             return (activation, *input[1:])
@@ -65,9 +70,11 @@ def get_direction_ablation_input_pre_hook(direction: Tensor, reference: Tensor |
             return activation
     return hook_fn
 
-def get_direction_ablation_output_hook(direction: Tensor, reference: Tensor | None = None):
+def get_direction_ablation_output_hook(direction: Tensor, 
+                                        reference: Tensor | None = None, 
+                                        coeff: Tensor| None = None):
     def hook_fn(module, input, output):
-        nonlocal direction, reference
+        nonlocal direction, reference, coeff
 
         if isinstance(output, tuple):
             activation: Float[Tensor, "batch_size seq_len d_model"] = output[0]
@@ -76,14 +83,18 @@ def get_direction_ablation_output_hook(direction: Tensor, reference: Tensor | No
 
         if reference is None:
             reference = torch.zeros_like(direction)
+        if coeff is None:
+            coeff = torch.Tensor([1])
 
         direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
+
         direction = direction.to(activation)
         reference = reference.to(activation)
+        coeff = coeff.to(activation)
 
         reference_projection = (reference @ direction).unsqueeze(-1) * direction
 
-        activation = activation - (activation @ direction).unsqueeze(-1) * direction + reference_projection
+        activation = activation - coeff * (activation @ direction).unsqueeze(-1) * direction + reference_projection
 
         if isinstance(output, tuple):
             return (activation, *output[1:])
@@ -147,7 +158,7 @@ def get_activation_addition_input_pre_hook(
     reference: Float[Tensor, "d_model"] | None = None
 ):
     def hook_fn(module, input):
-        nonlocal direction, reference
+        nonlocal direction, reference, coeff
 
         if isinstance(input, tuple):
             activation: Float[Tensor, "batch_size seq_len d_model"] = input[0]
@@ -159,10 +170,12 @@ def get_activation_addition_input_pre_hook(
             reference = torch.zeros_like(direction)
 
         direction = direction.to(activation)
+        reference = reference.to(activation)
+        coeff = coeff.to(activation)
         
         # Normalize the direction vector
         normalized_direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
-        reference = reference.to(activation)
+
 
         # Compute projections
         proj_v = (activation @ normalized_direction).unsqueeze(-1) * normalized_direction  # proj_r(v)
@@ -186,7 +199,7 @@ def get_activation_addition_input_post_hook(
     reference: Float[Tensor, "d_model"] | None = None
 ):
     def hook_fn(module, input, output):
-        nonlocal direction, reference
+        nonlocal direction, reference, coeff
 
         if reference is None:
             reference = torch.zeros_like(direction)
@@ -196,12 +209,12 @@ def get_activation_addition_input_post_hook(
             activation = output[0]
             other_outputs = output[1:]
             
-
             direction = direction.to(activation)
+            reference = reference.to(activation)
+            coeff = coeff.to(activation)
             
             # Normalize the direction vector
             normalized_direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
-            reference = reference.to(activation)
 
             # Compute projections
             proj_v = (activation @ normalized_direction).unsqueeze(-1) * normalized_direction  # proj_r(v)
@@ -215,10 +228,11 @@ def get_activation_addition_input_post_hook(
             activation = output
 
             direction = direction.to(activation)
+            reference = reference.to(activation)
+            coeff = coeff.to(activation)
             
             # Normalize the direction vector
             normalized_direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
-            reference = reference.to(activation)
 
             # Compute projections
             proj_v = (activation @ normalized_direction).unsqueeze(-1) * normalized_direction  # proj_r(v)
