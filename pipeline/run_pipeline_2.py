@@ -3,12 +3,13 @@ import random
 import json
 import os
 import argparse
+import numpy as np
 
 from dataset.load_dataset import load_dataset_split, load_dataset
 
 from pipeline.config import Config
 from pipeline.model_utils.model_factory import construct_model_base
-from pipeline.utils.hook_utils import get_activation_addition_input_pre_hook, get_all_direction_ablation_hooks, get_all_direction_ablation_hooks_2, get_activation_addition_input_post_hook
+from pipeline.utils.hook_utils import get_activation_addition_input_pre_hook, get_all_direction_ablation_hooks, get_direction_ablation_input_pre_hook, get_direction_ablation_output_hook, get_activation_addition_input_post_hook
 
 from pipeline.submodules.generate_directions_2 import generate_directions
 from pipeline.submodules.select_direction_2 import select_direction, get_refusal_scores
@@ -152,11 +153,14 @@ def run_pipeline(model_path):
     candidate_directions, harmless_mean = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train)
     
     # 2. Select the most effective refusal direction
-    pos, layer, direction, harmless_reference = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean)
+    pos, layer, direction, harmless_reference, alpha = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean)
 
     baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
-    ablation_fwd_pre_hooks, ablation_fwd_hooks = get_all_direction_ablation_hooks_2(model_base, direction, harmless_reference)
-    actadd_fwd_pre_hooks, actadd_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_activation_addition_input_pre_hook(direction=direction[0], coeff=-1.0, reference = harmless_reference[0]))], [(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(vector=direction[1], coeff=-1.0, reference = harmless_reference[1]))]
+    ablation_fwd_pre_hooks = [(model_base.model_mlp_modules[layer], get_direction_ablation_input_pre_hook(direction=direction[1], reference = harmless_reference[0], coeff = alpha)), ] # for layer in range(model_base.model.config.num_hidden_layers)
+    ablation_fwd_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_output_hook(direction=direction[2], reference = harmless_reference[0], coeff = alpha))] # for layer in range(model_base.model.config.num_hidden_layers)
+
+    actadd_fwd_pre_hooks = [(model_base.model_mlp_modules[layer], get_activation_addition_input_pre_hook(direction=direction[1], coeff = alpha))]
+    actadd_fwd_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=direction[2], coeff = alpha))]
 
     # 3a. Generate and save completions on harmful evaluation datasets
     for dataset_name in cfg.evaluation_datasets:
