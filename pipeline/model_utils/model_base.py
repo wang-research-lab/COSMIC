@@ -61,13 +61,13 @@ class ModelBase(ABC):
     def _get_post_attn_modules(self):
         pass
 
-    @abstractmethod
+    """@abstractmethod
     def _get_orthogonalization_mod_fn(self, direction: Float[Tensor, "d_model"]):
         pass
 
     @abstractmethod
     def _get_act_add_mod_fn(self, direction: Float[Tensor, "d_model"], coeff: float, layer: int):
-        pass
+        pass"""
 
     def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=8, max_new_tokens=64):
         generation_config = GenerationConfig(max_new_tokens=max_new_tokens, do_sample=False)

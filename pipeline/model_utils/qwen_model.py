@@ -129,10 +129,13 @@ class QwenModel(ModelBase):
         return QWEN_REFUSAL_TOKS
 
     def _get_model_block_modules(self):
-            return self.model.basemodel.layers
+            return self.model.model.layers
 
     def _get_attn_modules(self):
         return torch.nn.ModuleList([block_module.self_attn for block_module in self.model_block_modules])
     
     def _get_mlp_modules(self):
         return torch.nn.ModuleList([block_module.mlp for block_module in self.model_block_modules])
+
+    def _get_post_attn_modules(self):
+        return torch.nn.ModuleList([block_module.post_attention_layernorm for block_module in self.model_block_modules])
