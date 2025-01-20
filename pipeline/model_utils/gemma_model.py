@@ -88,8 +88,12 @@ class GemmaModel(ModelBase):
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=dtype,
-            device_map="cuda",
+            device_map="auto",
+            attn_implementation="eager"
         ).eval()
+
+        #note, for some reason sdpa attn creates NaN's in the directions 
+        #so we force gemma models to use eager attention        
 
         model.requires_grad_(False) 
 
@@ -124,3 +128,6 @@ class GemmaModel(ModelBase):
     
     def _get_act_add_mod_fn(self, direction: Float[Tensor, "d_model"], coeff, layer):
         return functools.partial(act_add_gemma_weights, direction=direction, coeff=coeff, layer=layer)
+    
+    def _get_post_attn_modules(self):
+        return torch.nn.ModuleList([block_module.post_attention_layernorm for block_module in self.model_block_modules])
