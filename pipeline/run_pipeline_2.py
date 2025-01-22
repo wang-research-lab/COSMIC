@@ -161,10 +161,12 @@ def run_pipeline(model_path):
     pre_layer_direction = direction[0]
     post_attn_direction = direction[1]
     post_mlp_direction = direction[2]
+    post_layer_direction = direction[3]
 
     pre_layer_reference = harmless_reference[0]
     post_attn_reference = harmless_reference[1]
     post_mlp_reference = harmless_reference[2]
+    post_layer_reference = harmless_reference[3]
 
     ablation_coeff = coefficients[0]
     actadd_coeff = coefficients[1]
@@ -174,12 +176,15 @@ def run_pipeline(model_path):
     ablation_fwd_pre_hooks =[(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
     ablation_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_direction_ablation_output_hook(direction=post_attn_direction, coeff = coeff, reference = post_attn_reference))]
     ablation_fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=post_mlp_direction, coeff = coeff, reference = post_mlp_reference))]
+    ablation_fwd_hooks += [(model_base.model_block_modules[layer], get_direction_ablation_output_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
 
 
     coeff = torch.Tensor([-actadd_coeff])
     actadd_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
     actadd_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_activation_addition_input_post_hook(direction=post_attn_direction, coeff = coeff, reference = post_attn_reference))]
-    actadd_fwd_hooks += [(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_mlp_direction, coeff = coeff, reference = post_mlp_reference))]
+    actadd_fwd_hooks += [(model_base.model_mlp_modules[layer], get_activation_addition_input_post_hook(direction=post_mlp_direction, coeff = coeff, reference = post_mlp_reference))]
+    actadd_fwd_hooks += [(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
+
 
     # 3a. Generate and save completions on harmful evaluation datasets
     for dataset_name in cfg.evaluation_datasets:
@@ -196,6 +201,7 @@ def run_pipeline(model_path):
     actadd_refusal_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
     actadd_refusal_hooks = [(model_base.model_post_attn_modules[layer], get_activation_addition_input_post_hook(direction=post_attn_direction, coeff = coeff, reference = post_attn_reference))]
     actadd_refusal_hooks += [(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_mlp_direction, coeff = coeff, reference = post_mlp_reference))]
+    actadd_refusal_hooks += [(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
 
     generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, 'actadd', 'harmless', dataset=harmless_test)
 
