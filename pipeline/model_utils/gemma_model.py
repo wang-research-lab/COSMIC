@@ -46,14 +46,16 @@ def tokenize_instructions_gemma_chat(
     system: str=None,
     include_trailing_whitespace=True,
 ):
+    if system is not None:
+        instructions = [system + instruction for instruction in instructions]
     if outputs is not None:
         prompts = [
-            format_instruction_gemma_chat(instruction=instruction, output=output, system=system, include_trailing_whitespace=include_trailing_whitespace)
+            format_instruction_gemma_chat(instruction=instruction, output=output, system=None, include_trailing_whitespace=include_trailing_whitespace)
             for instruction, output in zip(instructions, outputs)
         ]
     else:
         prompts = [
-            format_instruction_gemma_chat(instruction=instruction, system=system, include_trailing_whitespace=include_trailing_whitespace)
+            format_instruction_gemma_chat(instruction=instruction, system=None, include_trailing_whitespace=include_trailing_whitespace)
             for instruction in instructions
         ]
 

@@ -16,7 +16,7 @@ import torch.nn.functional as F
 
 
 from pipeline.model_utils.model_base import ModelBase
-from pipeline.utils.hook_utils import add_hooks, get_activation_addition_input_pre_hook, get_direction_ablation_input_pre_hook, get_direction_ablation_output_hook, get_activation_addition_input_post_hook
+from pipeline.utils.hook_utils import add_hooks, get_activation_addition_input_pre_hook, get_direction_ablation_input_pre_hook, get_activation_addition_input_post_hook
 
 
 def refusal_score(
@@ -53,63 +53,6 @@ def get_refusal_scores(model, instructions, tokenize_instructions_fn, refusal_to
 
     return refusal_scores
 
-def get_baseline_vector(model, baseline_instructions, tokenize_instructions_fn, layers_to_evaluate, fwd_pre_hooks=[], fwd_hooks=[], batch_size=32):
-    """
-    Computes the baseline vector by averaging the last hidden states for baseline instructions across all specified layers.
-    """
-    num_instructions = len(baseline_instructions)
-    raw_outputs = torch.zeros((num_instructions, len(layers_to_evaluate), model.config.hidden_size), device=model.device)
-
-    for i in range(0, num_instructions, batch_size):
-        tokenized_instructions = tokenize_instructions_fn(instructions=baseline_instructions[i:i+batch_size])
-        with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
-            outputs = model(
-                input_ids=tokenized_instructions.input_ids.to(model.device),
-                attention_mask=tokenized_instructions.attention_mask.to(model.device),
-                output_hidden_states=True
-            )
-        
-        hidden_states = outputs.hidden_states[1:]  # Exclude embeddings
-        for idx, layer_idx in enumerate(layers_to_evaluate):
-            raw_outputs[i:i+batch_size, idx, :] = hidden_states[layer_idx][:, -1, :]
-    
-    # Compute a single global baseline vector across all layers
-    mean_output_directions = raw_outputs.mean(dim=(0, 1))  # Shape: (hidden_size,)
-    norm = torch.norm(mean_output_directions, dim=-1, keepdim=True) + 1e-8
-    baseline_vector = mean_output_directions / norm
-
-    return baseline_vector  # Shape: (hidden_size,)
-
-def get_refusal_similarity(model, instructions, baseline_vector, tokenize_instructions_fn, layers_to_evaluate, fwd_pre_hooks=[], fwd_hooks=[], batch_size=32):
-    """
-    Computes a single global cosine similarity between instruction responses and the baseline vector across all evaluated layers.
-    """
-    num_instructions = len(instructions)
-    raw_outputs = torch.zeros((num_instructions, len(layers_to_evaluate), model.config.hidden_size), device=model.device)
-
-    for i in range(0, num_instructions, batch_size):
-        tokenized_instructions = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
-        with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
-            outputs = model(
-                input_ids=tokenized_instructions.input_ids.to(model.device),
-                attention_mask=tokenized_instructions.attention_mask.to(model.device),
-                output_hidden_states=True
-            )
-        
-        hidden_states = outputs.hidden_states[1:]
-        for idx, layer_idx in enumerate(layers_to_evaluate):
-            raw_outputs[i:i+batch_size, idx, :] = hidden_states[layer_idx][:, -1, :]
-    
-    # Compute a single global direction across all layers
-    mean_output_directions = raw_outputs.mean(dim=(0, 1))  # Shape: (hidden_size,)
-    normalized_proposed_direction = mean_output_directions / (torch.norm(mean_output_directions, dim=-1, keepdim=True) + 1e-8)
-    
-    # Compute global cosine similarity
-    cosine_similarity = torch.dot(normalized_proposed_direction, baseline_vector)
-    
-    return cosine_similarity
-
-
 
 def get_last_position_logits(model, tokenizer, instructions, tokenize_instructions_fn, fwd_pre_hooks=[], fwd_hooks=[], batch_size=32) -> Float[Tensor, "n_instructions d_vocab"]:
     last_position_logits = None
@@ -130,78 +73,6 @@ def get_last_position_logits(model, tokenizer, instructions, tokenize_instructio
             last_position_logits = torch.cat((last_position_logits, logits[:, -1, :]), dim=0)
 
     return last_position_logits
-
-def tune_intervention_strength(model_base, 
-                               candidate_directions, 
-                               harmless_mean, 
-                               baseline_activations_harmful,
-                               baseline_activations_harmless,
-                               harmful_instructions,
-                               harmless_instructions, 
-                               pos,
-                               layer,
-                               layers_to_evaluate,
-                               batch_size = 32):
-
-    baseline_harmless_logits = get_last_position_logits(
-        model=model_base.model,
-        tokenizer=model_base.tokenizer,
-        instructions=harmless_instructions,
-        tokenize_instructions_fn=model_base.tokenize_instructions_fn,
-        fwd_pre_hooks=[],
-        fwd_hooks=[],
-        batch_size=batch_size
-    )
-
-    ablation_scores = []
-    actadd_scores = []
-
-    pre_layer_ablation_dir = candidate_directions[0][pos, layer]
-    post_attn_ablation_dir = candidate_directions[1][pos, layer]
-    post_mlp_ablation_dir = candidate_directions[2][pos, layer]
-    post_layer_ablation_dir = candidate_directions[3][pos, layer]
-
-    pre_layer_ablation_ref = harmless_mean[0][pos, layer]
-    post_attn_ablation_ref = harmless_mean[1][pos, layer]
-    post_mlp_ablation_ref = harmless_mean[2][pos, layer]
-    post_layer_ablation_ref = harmless_mean[3][pos, layer]
-
-    for i in tqdm(np.arange(-2, 0.5, 0.05), desc=f"Testing ablation strength"):
-        coeff = torch.Tensor([i])
-
-
-        fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=pre_layer_ablation_dir, coeff = coeff, reference = pre_layer_ablation_ref))]
-        #fwd_hooks = [(model_base.model_post_attn_modules[layer], get_direction_ablation_output_hook(direction=post_attn_ablation_dir, coeff = coeff, reference = post_attn_ablation_ref))]
-        #fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=post_mlp_ablation_dir, coeff = coeff, reference = post_mlp_ablation_ref))]
-        fwd_hooks = []#[(model_base.model_block_modules[layer], get_direction_ablation_output_hook(direction=post_layer_ablation_dir, coeff = coeff, reference = post_layer_ablation_ref))]
-
-        refusal_scores = get_refusal_similarity(model_base.model, harmful_instructions, baseline_activations_harmless, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
-        refusal_score = refusal_scores.mean().item()
-
-        #ablation_scores.append((coeff.item(), refusal_score))
-
-
-        coeff = torch.Tensor([1-i])
-        fwd_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(direction=pre_layer_ablation_dir, coeff = coeff, reference = pre_layer_ablation_ref))]
-        #fwd_hooks = [(model_base.model_post_attn_modules[source_layer], get_activation_addition_input_post_hook(direction=post_attn_ablation_dir, coeff = coeff, reference = post_attn_ablation_ref))]
-        #fwd_hooks += [(model_base.model_mlp_modules[source_layer], get_activation_addition_input_post_hook(direction=post_mlp_ablation_dir, coeff = coeff, reference = post_mlp_ablation_ref))]
-        fwd_hooks = []#[(model_base.model_block_modules[source_layer], get_activation_addition_input_post_hook(direction=post_layer_ablation_dir, coeff = coeff, reference = post_layer_ablation_ref))]
-
-        steering_scores = get_refusal_similarity(model_base.model, harmless_instructions, baseline_activations_harmful, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
-        steering_score = steering_scores.mean().item()
-
-        ablation_scores.append((i, steering_score + refusal_score))
-
-    #ascending  because we want closer similarity to 1
-
-    selected_ablation = max(ablation_scores, key=lambda x: x[1])
-    
-    ablation_enhance_coeff = selected_ablation[0]
-    refusal_score = selected_ablation[1]
-
-    tuning_results = (ablation_enhance_coeff, refusal_score)
-
-    return tuning_results
 
         
 
@@ -241,10 +112,10 @@ def plot_refusal_scores(
     plt.savefig(f"{artifact_dir}/{artifact_name}.png")
 
 # returns True if the direction should be filtered out
-def filter_fn(refusal_score, steering_score, kl_div_score, pos, layer, n_layer, bypass_refusal_threshold = None, kl_threshold=None, induce_refusal_threshold=None, prune_layer_percentage=0.20) -> bool:
+def filter_fn(refusal_score, steering_score, kl_div_score, pos, layer, n_layer, bypass_refusal_threshold = None, kl_threshold=None, induce_refusal_threshold=None, prune_layer_percentage=0.33) -> bool:
     if math.isnan(refusal_score) or math.isnan(steering_score) or math.isnan(kl_div_score):
         return True
-    if layer >= int(n_layer * (1.0 - prune_layer_percentage)):
+    if pos == -1 and  layer >= int(n_layer * (1.0 - prune_layer_percentage)):
         return True
     if kl_threshold is not None and kl_div_score > kl_threshold:
         return True
@@ -260,11 +131,10 @@ def select_direction(
     harmless_instructions,
     candidate_directions: Float[Tensor, 'n_dir n_pos n_layer d_model'],
     harmless_mean: Float[Tensor, 'n_dir n_pos n_layer d_model'],
-    layers_to_evaluate,
     artifact_dir,
     kl_threshold=0.1, # directions larger KL score are filtered out
     induce_refusal_threshold=None, # directions with a lower inducing refusal score are filtered out
-    prune_layer_percentage=0.2, # discard the directions extracted from the last 20% of the model
+    prune_layer_percentage=0.4, # discard the directions extracted from the last 20% of the model
     batch_size=32
 ):
     if not os.path.exists(artifact_dir):
@@ -272,11 +142,12 @@ def select_direction(
 
     n_pos, n_layer, d_model = candidate_directions[0].shape
 
-    baseline_activations_harmful = get_baseline_vector(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_hooks=[], batch_size=batch_size)
-    baseline_activations_harmless = get_baseline_vector(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_hooks=[], batch_size=batch_size)
-
     baseline_refusal = 1 #ideally cosine sim 1 to harmless hidden states
     baseline_harmless = 1 #ideally cosine sim 1 to refusal hidden states
+
+    baseline_refusal_scores_harmful = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_hooks=[], batch_size=batch_size)
+    baseline_refusal_scores_harmless = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_hooks=[], batch_size=batch_size)
+
 
     ablation_kl_div_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float64)
     ablation_refusal_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float64)
@@ -292,6 +163,7 @@ def select_direction(
         batch_size=batch_size
     )
 
+
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing KL for source position {source_pos}"):
 
@@ -305,10 +177,8 @@ def select_direction(
             post_mlp_ablation_ref = harmless_mean[2][source_pos, source_layer]
             post_layer_ablation_ref = harmless_mean[3][source_pos, source_layer]
 
-            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_direction_ablation_input_pre_hook(direction=pre_layer_ablation_dir, reference = pre_layer_ablation_ref))]
-            #fwd_hooks = [(model_base.model_post_attn_modules[source_layer], get_direction_ablation_output_hook(direction=post_attn_ablation_dir, reference = post_attn_ablation_ref))]
-            #fwd_hooks += [(model_base.model_mlp_modules[source_layer], get_direction_ablation_output_hook(direction=post_mlp_ablation_dir, reference = post_mlp_ablation_ref))]
-            fwd_hooks = []#[(model_base.model_block_modules[source_layer], get_direction_ablation_output_hook(direction=post_layer_ablation_dir, reference = post_layer_ablation_ref))]
+            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_direction_ablation_input_pre_hook(direction=pre_layer_ablation_dir, reference=pre_layer_ablation_ref))]
+            fwd_hooks = []
 
             intervention_logits: Float[Tensor, "n_instructions 1 d_vocab"] = get_last_position_logits(
                 model=model_base.model,
@@ -335,12 +205,9 @@ def select_direction(
             post_mlp_ablation_ref = harmless_mean[2][source_pos, source_layer]
             post_layer_ablation_ref = harmless_mean[3][source_pos, source_layer]
 
-            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_direction_ablation_input_pre_hook(direction=pre_layer_ablation_dir, reference = pre_layer_ablation_ref))]
-            #fwd_hooks = [(model_base.model_post_attn_modules[source_layer], get_direction_ablation_output_hook(direction=post_attn_ablation_dir, reference = post_attn_ablation_ref))]
-            #fwd_hooks += [(model_base.model_mlp_modules[source_layer], get_direction_ablation_output_hook(direction=post_mlp_ablation_dir, reference = post_mlp_ablation_ref))]
-            fwd_hooks = []#[(model_base.model_block_modules[source_layer], get_direction_ablation_output_hook(direction=post_layer_ablation_dir, reference = post_layer_ablation_ref))]
-
-            refusal_scores = get_refusal_similarity(model_base.model, harmful_instructions, baseline_activations_harmless, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
+            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_direction_ablation_input_pre_hook(direction=pre_layer_ablation_dir, reference=pre_layer_ablation_ref))]
+            fwd_hooks = []
+            refusal_scores = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
             ablation_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
 
     for source_pos in range(-n_pos, 0):
@@ -356,21 +223,16 @@ def select_direction(
             post_mlp_ablation_ref = harmless_mean[2][source_pos, source_layer]
             post_layer_ablation_ref = harmless_mean[3][source_pos, source_layer]
 
-            coeff = torch.Tensor([1.])
+            coeff = torch.tensor(1.0)
+            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_activation_addition_input_pre_hook(direction=pre_layer_ablation_dir, coeff=coeff, reference=pre_layer_ablation_ref))]
+            fwd_hooks = []
 
-            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_activation_addition_input_pre_hook(direction=pre_layer_ablation_dir, coeff = coeff, reference = pre_layer_ablation_ref))]
-            #fwd_hooks = [(model_base.model_post_attn_modules[source_layer], get_activation_addition_input_post_hook(direction=post_attn_ablation_dir, coeff = coeff, reference = post_attn_ablation_ref))]
-            #fwd_hooks += [(model_base.model_mlp_modules[source_layer], get_activation_addition_input_post_hook(direction=post_mlp_ablation_dir, coeff = coeff, reference = post_mlp_ablation_ref))]
-            fwd_hooks = []#[(model_base.model_block_modules[source_layer], get_activation_addition_input_post_hook(direction=post_layer_ablation_dir, coeff = coeff, reference = post_layer_ablation_ref))]
-
-            refusal_scores = get_refusal_similarity(model_base.model, harmless_instructions, baseline_activations_harmful, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
+            refusal_scores = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
             steering_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
-
-
 
     plot_refusal_scores(
         refusal_scores=ablation_refusal_scores,
-        baseline_refusal_score=baseline_refusal,
+        baseline_refusal_score=baseline_refusal_scores_harmful.mean().item(),
         token_labels=model_base.tokenizer.batch_decode(model_base.eoi_toks),
         title='Ablating direction on harmful instructions',
         artifact_dir=artifact_dir,
@@ -379,13 +241,12 @@ def select_direction(
 
     plot_refusal_scores(
         refusal_scores=steering_refusal_scores,
-        baseline_refusal_score=baseline_harmless,
+        baseline_refusal_score=baseline_refusal_scores_harmless.mean().item(),
         token_labels=model_base.tokenizer.batch_decode(model_base.eoi_toks),
         title='Adding direction on harmless instructions',
         artifact_dir=artifact_dir,
         artifact_name='actadd_scores'
     )
-
 
     plot_refusal_scores(
         refusal_scores=ablation_kl_div_scores,
@@ -396,20 +257,10 @@ def select_direction(
         artifact_name='kl_div_scores'
     )
 
-
-    
-
     filtered_scores = []
     json_output_all_scores = []
     json_output_filtered_scores = []
 
-
-    refusal_peaks = torch.argmax(torch.nan_to_num(ablation_refusal_scores[-n_pos:-1, :], nan=-float('inf')), dim=1)
-    limit_refusal_layer = torch.nanmedian(refusal_peaks)
-
-    steering_peaks = torch.argmax(torch.nan_to_num(steering_refusal_scores[-n_pos:-1, :], nan=-float('inf')), dim=1)
-    cutoff_steering_layer = torch.nanmedian(steering_peaks)
-    
     for source_pos in range(-n_pos, 0):
         for source_layer in range(n_layer):
 
@@ -425,8 +276,9 @@ def select_direction(
             steering_score = steering_refusal_scores[source_pos, source_layer].item()
             kl_div_score = ablation_kl_div_scores[source_pos, source_layer].item()
 
-
-            sorting_score = steering_score + refusal_score
+            # we sort the directions in descending order (from highest to lowest score)
+            # the intervention is better at bypassing refusal if the refusal score is low, so we multiply by -1
+            sorting_score = -refusal_score
 
             # we filter out directions if the KL threshold 
             discard_direction = filter_fn(
@@ -441,10 +293,6 @@ def select_direction(
                 prune_layer_percentage=prune_layer_percentage
             )
 
-            if source_pos == -1:
-                if limit_refusal_layer < source_layer and cutoff_steering_layer < source_layer:
-                    continue
-                
             if discard_direction:
                 continue
 
@@ -461,48 +309,24 @@ def select_direction(
     with open(f"{artifact_dir}/direction_evaluations.json", 'w') as f:
         json.dump(json_output_all_scores, f, indent=4)
 
-    json_output_filtered_scores = sorted(json_output_filtered_scores, 
-                                         key=lambda x: x["steering_score"] + x["refusal_score"], reverse=True)
+    json_output_filtered_scores = sorted(json_output_filtered_scores, key=lambda x: x['refusal_score'], reverse=False)
 
     with open(f"{artifact_dir}/direction_evaluations_filtered.json", 'w') as f:
         json.dump(json_output_filtered_scores, f, indent=4)
 
-
     assert len(filtered_scores) > 0, "All scores have been filtered out!"
 
-
-    filtered_scores = sorted(filtered_scores, key=lambda x: x[0], reverse = True)
+    # sorted in descending order
+    filtered_scores = sorted(filtered_scores, key=lambda x: x[0], reverse=True)
 
     # now return the best position, layer, and direction
     score, pos, layer = filtered_scores[0]
 
     print(f"Selected direction: position={pos}, layer={layer}")
-    print(f"Refusal score: {ablation_refusal_scores[pos, layer]:.4f} (baseline: {baseline_refusal:.4f})")
-    print(f"Steering score: {steering_refusal_scores[pos, layer]:.4f} (baseline: {baseline_harmless:.4f})")
+    print(f"Refusal score: {ablation_refusal_scores[pos, layer]:.4f} (baseline: {baseline_refusal_scores_harmful.mean().item():.4f})")
+    print(f"Steering score: {steering_refusal_scores[pos, layer]:.4f} (baseline: {baseline_refusal_scores_harmless.mean().item():.4f})")
     print(f"KL Divergence: {ablation_kl_div_scores[pos, layer]:.4f}")
-
-    """tuning_results = tune_intervention_strength(model_base, 
-                            candidate_directions, 
-                            harmless_mean, 
-                            baseline_activations_harmful,
-                            baseline_activations_harmless,  
-                            harmful_instructions,
-                            harmless_instructions, 
-                            pos,
-                            layer,
-                            layers_to_evaluate,
-                            batch_size = 32)"""
-
-    ablation_enhance_coeff = 0# tuning_results[0]
-    selected_refusal_score = 0#tuning_results[1]
-
-    print("\nWith Intervention:")
-
-    # Print detailed information about the selected score
-    print(f"Selected ablation_enhance_coeff: {ablation_enhance_coeff}")
-    print(f"Refusal score: {selected_refusal_score:.4f}")
-
-
+    
     #pre, attn, and mlp
     selected_directions = torch.stack((candidate_directions[0][pos, layer],
                                        candidate_directions[1][pos, layer], 
@@ -515,7 +339,7 @@ def select_direction(
                                       harmless_mean[3][pos, layer]), dim=0)
 
 
-    return pos, layer, selected_directions, harmless_reference, ablation_enhance_coeff
+    return pos, layer, selected_directions, harmless_reference, 0
 
 
 def masked_mean(seq, mask = None, dim = 1, keepdim = False):

@@ -69,16 +69,53 @@ class ModelBase(ABC):
     def _get_act_add_mod_fn(self, direction: Float[Tensor, "d_model"], coeff: float, layer: int):
         pass"""
 
-    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=8, max_new_tokens=64):
+    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=8, max_new_tokens=64, progress = True):
+
         generation_config = GenerationConfig(max_new_tokens=max_new_tokens, do_sample=False)
         generation_config.pad_token_id = self.tokenizer.pad_token_id
 
         completions = []
         instructions = [x['instruction'] for x in dataset]
-        categories = [x['category'] for x in dataset]
+        categories = [x['category'] if 'category' in x else None for x in dataset]
 
-        for i in tqdm(range(0, len(dataset), batch_size)):
+        # Select tqdm functionality based on the tqdm parameter
+        progress_iter = tqdm(range(0, len(dataset), batch_size), disable=not progress)
+
+        for i in progress_iter:
             tokenized_instructions = self.tokenize_instructions_fn(instructions=instructions[i:i + batch_size])
+
+            with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+                generation_toks = self.model.generate(
+                    input_ids=tokenized_instructions.input_ids.to(self.model.device),
+                    attention_mask=tokenized_instructions.attention_mask.to(self.model.device),
+                    generation_config=generation_config,
+                )
+
+                generation_toks = generation_toks[:, tokenized_instructions.input_ids.shape[-1]:]
+
+                for generation_idx, generation in enumerate(generation_toks):
+                    completions.append({
+                        'category': categories[i + generation_idx],
+                        'prompt': instructions[i + generation_idx],
+                        'response': self.tokenizer.decode(generation, skip_special_tokens=True).strip()
+                    })
+
+        return completions
+
+    def generate_completions_system(self, dataset, system_prompt, fwd_pre_hooks=[], fwd_hooks=[], batch_size=8, max_new_tokens=64, progress = True):
+
+        generation_config = GenerationConfig(max_new_tokens=max_new_tokens, do_sample=False)
+        generation_config.pad_token_id = self.tokenizer.pad_token_id
+
+        completions = []
+        instructions = [x['instruction'] for x in dataset]
+        categories = [x['category'] if 'category' in x else None for x in dataset]
+
+        # Select tqdm functionality based on the tqdm parameter
+        progress_iter = tqdm(range(0, len(dataset), batch_size), disable=not progress)
+
+        for i in progress_iter:
+            tokenized_instructions = self.tokenize_instructions_fn(instructions=instructions[i:i + batch_size], system=system_prompt)
 
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
                 generation_toks = self.model.generate(

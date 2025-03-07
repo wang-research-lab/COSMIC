@@ -129,13 +129,27 @@ class QwenModel(ModelBase):
         return QWEN_REFUSAL_TOKS
 
     def _get_model_block_modules(self):
-            return self.model.model.layers
+            if "2" in self.model_name_or_path:
+                return self.model.model.layers
+            elif "Chat" in self.model_name_or_path:
+                for i, layer in enumerate(self.model.transformer.h):
+                    self.model.transformer.h[i].self_attn = layer.attn
+                return self.model.transformer.h
+            else:
+                raise AssertionError("model unknown - not 2, 2.5 or Qwen 1")
 
     def _get_attn_modules(self):
-        return torch.nn.ModuleList([block_module.self_attn for block_module in self.model_block_modules])
-    
+            if "2" in self.model_name_or_path:
+                return torch.nn.ModuleList([block_module.self_attn for block_module in self.model_block_modules])
+            elif "Chat" in self.model_name_or_path:
+                return torch.nn.ModuleList([block_module.attn for block_module in self.model_block_modules])
+            else:
+                raise AssertionError("model unknown - not 2, 2.5 or Qwen 1")
+            
     def _get_mlp_modules(self):
         return torch.nn.ModuleList([block_module.mlp for block_module in self.model_block_modules])
 
     def _get_post_attn_modules(self):
+        if "Chat" in self.model_name_or_path:
+            return None
         return torch.nn.ModuleList([block_module.post_attention_layernorm for block_module in self.model_block_modules])

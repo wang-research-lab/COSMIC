@@ -5,7 +5,7 @@ def construct_model_base(model_path: str) -> ModelBase:
     if 'qwen' in model_path.lower():
         from pipeline.model_utils.qwen_model import QwenModel
         return QwenModel(model_path)
-    if 'llama-3' in model_path.lower():
+    if 'llama' in model_path.lower() and '3' in model_path.lower():
         from pipeline.model_utils.llama3_model import Llama3Model
         return Llama3Model(model_path)
     elif 'llama' in model_path.lower():
@@ -17,5 +17,8 @@ def construct_model_base(model_path: str) -> ModelBase:
     elif 'yi' in model_path.lower():
         from pipeline.model_utils.yi_model import YiModel
         return YiModel(model_path)
+    elif "mistral" in model_path.lower():
+        from pipeline.model_utils.mistral_model import MistralModel
+        return MistralModel(model_path)
     else:
         raise ValueError(f"Unknown model family: {model_path}")
