@@ -96,11 +96,6 @@ def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candid
     if os.path.exists(f'{cfg.artifact_path()}/direction_metadata.json'):
         with open(f'{cfg.artifact_path()}/direction_metadata.json', "r") as f:
             saved_metadata = json.load(f)
-
-        # Check if metadata matches
-        if saved_metadata.get("pos") == pos and \
-           saved_metadata.get("layer") == layer:
-            raise Exception("Existing results match")
     
     with open(f'{cfg.artifact_path()}/direction_metadata.json', "w") as f:
         json.dump({"pos": pos, 
@@ -251,14 +246,14 @@ def run_pipeline(model_path):
     #actadd_fwd_hooks += [(model_base.model_mlp_modules[layer], get_activation_addition_input_post_hook(direction=post_mlp_direction, coeff = coeff, reference = post_mlp_reference))]
     actadd_fwd_hooks = []#[(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
     
-    
-    # 3a. Generate and save completions on harmful evaluation datasets
-    for dataset_name in cfg.evaluation_datasets:
-        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name)
-        generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', dataset_name)
-        generate_and_save_completions_for_dataset(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd', dataset_name)
 
-    
+
+    # 3a. Generate and save completions on harmful evaluation datasets
+    harmful_test = random.sample(load_dataset_split(harmtype='harmful', split='test'), cfg.n_test)
+
+    generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmful', dataset = harmful_test)
+    generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', 'harmful', dataset = harmful_test)
+    generate_and_save_completions_for_dataset(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd', 'harmful', dataset = harmful_test)
 
 
     # 4a. Generate and save completions on harmless evaluation dataset
@@ -272,14 +267,14 @@ def run_pipeline(model_path):
     
     generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, 'actadd', 'harmless', dataset=harmless_test)
 
-    evaluate_gpqa_and_arc(cfg, model_base, 
+    """evaluate_gpqa_and_arc(cfg, model_base, 
                            ablation_fwd_pre_hooks, 
                            ablation_fwd_hooks, 
                            None, 
                            None,
                            exclude_base = True,
                            batch_size = 32)
-    evaluate_truthful_qa(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, None, None, batch_size = 8)
+    evaluate_truthful_qa(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, None, None, batch_size = 8)"""
     
     
 
@@ -294,11 +289,10 @@ def run_pipeline(model_path):
 
 
     # 3b. Evaluate completions and save results on harmful evaluation datasets
-    for dataset_name in cfg.evaluation_datasets:
-        evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-        evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-        evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-    
+    evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
+    evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
+    evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
+
 
 if __name__ == "__main__":
     args = parse_arguments()

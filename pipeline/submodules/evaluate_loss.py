@@ -129,7 +129,7 @@ def evaluate_loss(
     batch_size=16,
     n_batches=256,
     max_seq_length=256,
-    dataset_labels=["alpaca", "alpaca_custom_completions"],
+    dataset_labels=["pile","alpaca"],
     completions_file_path=None
 ):
     result = {}

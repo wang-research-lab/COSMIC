@@ -197,14 +197,14 @@ def run_pipeline(model_path):
     #actadd_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_activation_addition_input_post_hook(direction=post_attn_direction, coeff = coeff, reference = post_attn_reference))]
     actadd_fwd_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
 
-    evaluate_gpqa_and_arc(cfg, model_base, 
+    """evaluate_gpqa_and_arc(cfg, model_base, 
                            ablation_fwd_pre_hooks, 
                            ablation_fwd_hooks, 
                            actadd_fwd_pre_hooks, 
                            actadd_fwd_hooks,
                            batch_size = 8)
     
-    evaluate_truthful_qa(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, actadd_fwd_pre_hooks, actadd_fwd_hooks, batch_size = 8)
+    evaluate_truthful_qa(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, actadd_fwd_pre_hooks, actadd_fwd_hooks, batch_size = 8)"""
 
     # 3a. Generate and save completions on harmful evaluation datasets
     for dataset_name in cfg.evaluation_datasets:
@@ -224,10 +224,10 @@ def run_pipeline(model_path):
 
     generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, 'actadd', 'harmless', dataset=harmless_test)
 
-    # 5. Evaluate loss on harmless datasets
+    """# 5. Evaluate loss on harmless datasets
     evaluate_loss_for_datasets(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline')
     evaluate_loss_for_datasets(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation')
-    evaluate_loss_for_datasets(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd')
+    evaluate_loss_for_datasets(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd')"""
 
     #we load in llamaguard now for evals
     #so we're deleting the model to spare your vram

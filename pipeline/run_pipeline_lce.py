@@ -168,10 +168,11 @@ def run_pipeline(model_path):
 
 
     # 3a. Generate and save completions on harmful evaluation datasets
-    for dataset_name in cfg.evaluation_datasets:
-        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name)
-        generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', dataset_name)
-        generate_and_save_completions_for_dataset(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd', dataset_name)
+    harmful_test = random.sample(load_dataset_split(harmtype='harmful', split='test'), cfg.n_test)
+
+    generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmful', dataset = harmful_test)
+    generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', 'harmful', dataset = harmful_test)
+    generate_and_save_completions_for_dataset(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd', 'harmful', dataset = harmful_test)
 
     # 4a. Generate and save completions on harmless evaluation dataset
     harmless_test = random.sample(load_dataset_split(harmtype='harmless', split='test'), cfg.n_test)
@@ -202,11 +203,10 @@ def run_pipeline(model_path):
 
 
     # 3b. Evaluate completions and save results on harmful evaluation datasets
-    for dataset_name in cfg.evaluation_datasets:
-        evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-        evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-        evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-    
+    evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
+    evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
+    evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
+
 
 if __name__ == "__main__":
     args = parse_arguments()

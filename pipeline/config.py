@@ -8,9 +8,9 @@ from typing import Tuple
 class Config:
     model_alias: str
     model_path: str
-    n_train: int = 128
-    n_test: int = 100
-    n_val: int = 32
+    n_train: int = 180
+    n_test: int = 512
+    n_val: int = 100
     filter_train: bool = True
     filter_val: bool = True
     evaluation_datasets: Tuple[str] = ("jailbreakbench",)

@@ -71,6 +71,7 @@ def generate_and_save_candidate_directions(cfg, model_base, harmful_train, harml
         model_base,
         harmful_train,
         harmless_train,
+        batch_size = 64,
         artifact_dir=os.path.join(cfg.artifact_path(), "generate_directions"))
 
     torch.save(mean_diffs, os.path.join(cfg.artifact_path(), 'generate_directions/mean_diffs.pt'))
@@ -89,12 +90,9 @@ def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candid
         candidate_directions,
         harmless_mean,
         layers_to_evaluate,
+        batch_size = 64,
         artifact_dir=os.path.join(cfg.artifact_path(), "select_direction")
     )
-    
-    if os.path.exists(f'{cfg.artifact_path()}/direction_metadata.json'):
-        with open(f'{cfg.artifact_path()}/direction_metadata.json', "r") as f:
-            saved_metadata = json.load(f)
 
     with open(f'{cfg.artifact_path()}/direction_metadata.json', "w") as f:
         json.dump({"pos": pos, 
@@ -113,7 +111,7 @@ def generate_and_save_completions_for_dataset(cfg, model_base, fwd_pre_hooks, fw
     if dataset is None:
         dataset = load_dataset(dataset_name)
 
-    completions = model_base.generate_completions(dataset, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, max_new_tokens=cfg.max_new_tokens, batch_size = 64)
+    completions = model_base.generate_completions(dataset, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, max_new_tokens=cfg.max_new_tokens, batch_size = 256)
     
     with open(f'{cfg.artifact_path()}/completions/{dataset_name}_{intervention_label}_completions.json', "w") as f:
         json.dump(completions, f, indent=4)
@@ -144,7 +142,7 @@ def evaluate_loss_for_datasets(cfg, model_base, fwd_pre_hooks, fwd_hooks, interv
     with open(f'{cfg.artifact_path()}/loss_evals/{intervention_label}_loss_eval.json', "w") as f:
         json.dump(loss_evals, f, indent=4)
 
-def compute_and_save_similarity(model, harmful_data, harmless_data, tokenize_fn, fwd_pre_hooks=[], fwd_hooks=[], batch_size=32, fraction = 0.10):
+def compute_and_save_similarity(model, harmful_data, harmless_data, tokenize_fn, fwd_pre_hooks=[], fwd_hooks=[], batch_size=64, fraction = 0.10):
     """
     Computes cosine similarity between mean activations of harmful and harmless data for each layer
     and returns the layers ranked by the least similarities.
@@ -192,7 +190,7 @@ def run_pipeline(model_path):
     
     """Run the full pipeline."""
     model_alias = os.path.basename(model_path)
-    model_alias += "-linear"
+    model_alias += "-back-rdt"
     cfg = Config(model_alias=model_alias, model_path=model_path)
     
     model_base = construct_model_base(cfg.model_path)
@@ -220,31 +218,18 @@ def run_pipeline(model_path):
     direction = direction[0]
 
     baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
-    ablation_fwd_pre_hooks, ablation_fwd_hooks = get_all_direction_ablation_hooks(model_base, direction)
+    first_ablation_fwd_pre_hooks, first_ablation_fwd_hooks = get_all_direction_ablation_hooks(model_base, direction)
     actadd_fwd_pre_hooks, actadd_fwd_hooks = [(model_base.model_block_modules[layer], 
                                                get_activation_addition_input_pre_hook(vector=direction, 
                                                coeff=torch.Tensor([-1.0]).to(direction.device)))], []
 
 
-    """evaluate_loss_for_datasets(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline')
-    evaluate_loss_for_datasets(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation')
-    
-    evaluate_gpqa_and_arc(cfg, model_base, 
-                           ablation_fwd_pre_hooks, 
-                           ablation_fwd_hooks, 
-                           None, 
-                           None,
-                           exclude_base = True,
-                           batch_size = 32)
-    evaluate_truthful_qa(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, None, None, batch_size = 8)"""
-    
-
     # 3a. Generate and save completions on harmful evaluation datasets
     harmful_test = random.sample(load_dataset_split(harmtype='harmful', split='test'), cfg.n_test)
 
-    generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmful', dataset = harmful_test)
-    generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', 'harmful', dataset = harmful_test)
-    generate_and_save_completions_for_dataset(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd', 'harmful', dataset = harmful_test)
+    generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline_first', 'harmful', dataset = harmful_test)
+    generate_and_save_completions_for_dataset(cfg, model_base, first_ablation_fwd_pre_hooks, first_ablation_fwd_hooks, 'ablation_first', 'harmful', dataset = harmful_test)
+
 
     # 4a. Generate and save completions on harmless evaluation dataset
     harmless_test = random.sample(load_dataset_split(harmtype='harmless', split='test'), cfg.n_test)
@@ -257,21 +242,90 @@ def run_pipeline(model_path):
     
     generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, 'actadd', 'harmless', dataset=harmless_test)
 
+    with add_hooks(module_forward_pre_hooks=first_ablation_fwd_pre_hooks, module_forward_hooks=first_ablation_fwd_hooks):
+        # 1. Generate candidate refusal directions
+        candidate_directions, harmless_mean = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train)
 
-    #del model_base, candidate_directions
+        layers_to_evaluate = compute_and_save_similarity(model_base.model, 
+                                                        harmful_train, 
+                                                        harmless_train,
+                                                        model_base.tokenize_instructions_fn, 
+                                                        fwd_pre_hooks=[], 
+                                                        fwd_hooks=[])
+        
+        print("Layers to evaluate are", layers_to_evaluate)
+        
+
+        # 2. Select the most effective refusal direction
+        pos, layer, direction, harmless_reference, ablation_enhance_coeff  = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, layers_to_evaluate)
+
+        direction = direction[0]
+
+        baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
+        ablation_fwd_pre_hooks, ablation_fwd_hooks = get_all_direction_ablation_hooks(model_base, direction)
+        actadd_fwd_pre_hooks, actadd_fwd_hooks = [(model_base.model_block_modules[layer], 
+                                                get_activation_addition_input_pre_hook(vector=direction, 
+                                                coeff=torch.Tensor([-1.0]).to(direction.device)))], []
+
+        
+        # 3a. Generate and save completions on harmful evaluation datasets
+        for dataset_name in cfg.evaluation_datasets:
+            generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name)
+            generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', dataset_name)
+            generate_and_save_completions_for_dataset(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd', dataset_name)
+
+        
+
+
+        # 4a. Generate and save completions on harmless evaluation dataset
+        harmless_test = random.sample(load_dataset_split(harmtype='harmless', split='test'), cfg.n_test)
+
+        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmless', dataset=harmless_test)
+        
+        for alpha in range(1, 4):
+            coeff = torch.Tensor([alpha])
+            actadd_refusal_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(vector=direction, coeff = coeff))]
+            actadd_refusal_hooks = []#[(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
+            
+            generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, f'actadd_{alpha}', 'harmless', dataset=harmless_test)
+            generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, f'actadd_{alpha}', dataset_name)
+
+
+    del model_base, candidate_directions
     torch.cuda.empty_cache() 
-    
+
+    for alpha in range(1, 4):
+            coeff = torch.Tensor([alpha])
+            actadd_refusal_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
+            actadd_refusal_hooks = []#[(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
+            
+            generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, f'actadd_{alpha}', 'harmless', dataset=harmless_test)
+            generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, f'actadd_{alpha}', "harmful", dataset=harmful_test)
+
+
+
+
+    #we load in llamaguard now for evals
+    #so we're deleting the model to spare your vram
+    del model_base
+    torch.cuda.empty_cache() 
+
+    for alpha in range(1, 4):
+        evaluate_completions_and_save_results_for_dataset(cfg, f'actadd_{alpha}', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
+        evaluate_completions_and_save_results_for_dataset(cfg, f'actadd_{alpha}', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
+
 
     # 4b. Evaluate completions and save results on harmless evaluation dataset
     evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
     evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
 
 
-
     # 3b. Evaluate completions and save results on harmful evaluation datasets
     evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
+    evaluate_completions_and_save_results_for_dataset(cfg, 'baseline_first', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
     evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
     evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
+    evaluate_completions_and_save_results_for_dataset(cfg, 'ablation_first', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
 
 
 if __name__ == "__main__":

@@ -4,51 +4,15 @@ import functools
 import math
 import matplotlib.pyplot as plt
 import os
-import importlib
 
 from typing import List, Optional
 from jaxtyping import Float, Int
 from torch import Tensor
 from tqdm import tqdm
-import csv
 from einops import rearrange
 
 from pipeline.model_utils.model_base import ModelBase
-from pipeline.utils.hook_utils import add_hooks, get_activation_addition_input_pre_hook, get_direction_ablation_input_pre_hook, get_direction_ablation_output_hook
-from pipeline.model_utils.layer_residual_ablation import ablateresidual_LlamaDecoderLayer
-
-from contextlib import contextmanager
-
-@contextmanager
-def temporary_layer_replacement(model, layer_index, ablation_module, ablation_method_name, direction, **ablation_kwargs):
-    """
-    Temporarily replace a layer in the model with a method or class for ablation.
-
-    Args:
-        model: The model containing the layers (assumes model.model.layers is a ModuleList).
-        layer_index: The index of the layer to be replaced.
-        ablation_module: module where the ablation_method is declared.
-        ablation_method_name: The name of the method (string) to use for modifying the layer.
-        **ablation_kwargs: Additional arguments to pass to the ablation method.
-    """
-    # Save the original layer
-    original_layer = model.model.layers[layer_index]
-    
-    try:
-        # Retrieve the ablation method by namerefusal_direction-main/dataset refusal_direction-main/dataset/__pycache__ refusal_direction-main/dataset/processed refusal_direction-main/dataset/raw refusal_direction-main/dataset/splits refusal_direction-main/dataset/__init__.py refusal_direction-main/dataset/generate_datasets.ipynb refusal_direction-main/dataset/load_dataset.py refusal_direction-main/pipeline refusal_direction-main/.gitignore refusal_direction-main/LICENSE refusal_direction-main/README.md refusal_direction-main/requirements.txt refusal_direction-main/setup.sh
-        ablation_method = getattr(ablation_module, ablation_method_name, None)
-
-        if not callable(ablation_method):
-            raise ValueError(f"Ablation method '{ablation_method_name}' is not callable or does not exist in the specified module.")
-
-        # Apply the ablation method
-        ablation_method(model.model.layers[layer_index], layer_index, direction, **ablation_kwargs)
-
-        # Temporarily replace the layer
-        yield  # Execute the code within the context
-
-    finally:
-        model.model.layers[layer_index] = original_layer
+from pipeline.utils.orig_hook_utils import add_hooks, get_activation_addition_input_pre_hook, get_direction_ablation_input_pre_hook, get_direction_ablation_output_hook
 
 def refusal_score(
     logits: Float[Tensor, 'batch seq d_vocab_out'],
@@ -150,7 +114,7 @@ def filter_fn(refusal_score, steering_score, kl_div_score, layer, n_layer, kl_th
         return True
     return False
 
-def select_direction_with_resablation(
+def select_direction(
     model_base: ModelBase,
     harmful_instructions,
     harmless_instructions,
@@ -159,8 +123,7 @@ def select_direction_with_resablation(
     kl_threshold=0.1, # directions larger KL score are filtered out
     induce_refusal_threshold=0.0, # directions with a lower inducing refusal score are filtered out
     prune_layer_percentage=0.2, # discard the directions extracted from the last 20% of the model
-    batch_size=32,
-    **ablation_kwargs
+    batch_size=32
 ):
     if not os.path.exists(artifact_dir):
         os.makedirs(artifact_dir)
@@ -184,78 +147,48 @@ def select_direction_with_resablation(
         batch_size=batch_size
     )
 
-    #declare the residual connection ablation method
-    layername = type(model_base.model_block_modules[0]).__qualname__
-    ablation_module = importlib.import_module("pipeline.model_utils.layer_residual_ablation")
-    ablation_method_name = f"ablateresidual_{layername}"
-
-    params = '_'.join(str(value) for value in ablation_kwargs.values())
-
-
-    file_name = f'{artifact_dir}/{ablation_method_name}_{params}.csv'
-    print(f"saving to {file_name}")
-
-    with open(file_name, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["post-attention projection norm w/ residual conn", 
-                         "post-attention projection norm w/o residual conn",
-                         "post-mlp projection norm w/ residual conn",
-                         "post-mlp projection norm w/o residual conn"])
-
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing KL for source position {source_pos}"):
 
-            directions = candidate_directions[source_pos]
+            ablation_dir = candidate_directions[source_pos, source_layer]
+            fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+            fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+            fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
 
-            with temporary_layer_replacement(model_base.model, source_layer, ablation_module, ablation_method_name, direction = directions, log_name=file_name, **ablation_kwargs):
-            
-                ablation_dir = directions[source_layer]
-                fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-                fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-                fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+            intervention_logits: Float[Tensor, "n_instructions 1 d_vocab"] = get_last_position_logits(
+                model=model_base.model,
+                tokenizer=model_base.tokenizer,
+                instructions=harmless_instructions,
+                tokenize_instructions_fn=model_base.tokenize_instructions_fn,
+                fwd_pre_hooks=fwd_pre_hooks,
+                fwd_hooks=fwd_hooks,
+                batch_size=batch_size
+            )
 
-                intervention_logits: Float[Tensor, "n_instructions 1 d_vocab"] = get_last_position_logits(
-                    model=model_base.model,
-                    tokenizer=model_base.tokenizer,
-                    instructions=harmless_instructions,
-                    tokenize_instructions_fn=model_base.tokenize_instructions_fn,
-                    fwd_pre_hooks=fwd_pre_hooks,
-                    fwd_hooks=fwd_hooks,
-                    batch_size=batch_size
-                )
-
-                ablation_kl_div_scores[source_pos, source_layer] = kl_div_fn(baseline_harmless_logits, intervention_logits, mask=None).mean(dim=0).item()
+            ablation_kl_div_scores[source_pos, source_layer] = kl_div_fn(baseline_harmless_logits, intervention_logits, mask=None).mean(dim=0).item()
 
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing refusal ablation for source position {source_pos}"):
 
-            directions = candidate_directions[source_pos]
+            ablation_dir = candidate_directions[source_pos, source_layer]
+            fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+            fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+            fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
 
-            with temporary_layer_replacement(model_base.model, source_layer, ablation_module, ablation_method_name, direction = directions, log_name=file_name, **ablation_kwargs):
-                
-                ablation_dir = directions[source_layer]
-                fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-                fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-                fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-
-                refusal_scores = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
-                ablation_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
+            refusal_scores = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
+            ablation_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
 
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing refusal addition for source position {source_pos}"):
 
-            directions = candidate_directions[source_pos]
+            refusal_vector = candidate_directions[source_pos, source_layer]
             coeff = torch.tensor(1.0)
 
-            with temporary_layer_replacement(model_base.model, source_layer, ablation_module, ablation_method_name, direction = directions, coeff = coeff, log_name=file_name, **ablation_kwargs):
+            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_activation_addition_input_pre_hook(vector=refusal_vector, coeff=coeff))]
+            fwd_hooks = []
 
-
-                refusal_vector = directions[source_layer]
-                fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_activation_addition_input_pre_hook(vector=refusal_vector, coeff=coeff))]
-                fwd_hooks = []
-
-                refusal_scores = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
-                steering_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
+            refusal_scores = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
+            steering_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
 
     plot_refusal_scores(
         refusal_scores=ablation_refusal_scores,
