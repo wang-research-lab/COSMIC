@@ -1,12 +1,10 @@
-# Refusal in Language Models Is Mediated by a Single Direction
+# COSMIC: Generalized Refusal Identification in LLM Activations
 
 **Content warning**: This repository contains text that is offensive, harmful, or otherwise inappropriate in nature.
 
-This repository contains code and results accompanying the paper "Refusal in Language Models Is Mediated by a Single Direction".
-In the spirit of scientific reproducibility, we provide code to reproduce the main results from the paper.
+This repository contains code and results accompanying the paper "COSMIC: Generalized Refusal Identification in LLM Activations".
 
 - [Paper](https://arxiv.org/abs/2406.11717)
-- [Blog post](https://www.lesswrong.com/posts/jGuXSZgv6qfdhMCuJ/refusal-in-llms-is-mediated-by-a-single-direction)
 
 ## Setup
 
