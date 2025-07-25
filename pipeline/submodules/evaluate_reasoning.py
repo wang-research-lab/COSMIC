@@ -306,8 +306,6 @@ def evaluate_gpqa_and_arc(cfg,
                          model_base, 
                          ablation_fwd_pre_hooks, 
                          ablation_fwd_hooks, 
-                         actadd_fwd_pre_hooks, 
-                         actadd_fwd_hooks,
                          exclude_base = False,
                          batch_size=16):
 
@@ -350,8 +348,6 @@ def evaluate_truthful_qa(cfg,
                          model_base, 
                          ablation_fwd_pre_hooks, 
                          ablation_fwd_hooks, 
-                         actadd_fwd_pre_hooks, 
-                         actadd_fwd_hooks, 
                          truthful_qa_path="dataset/TruthfulQA.csv",
                          batch_size=32):
     """

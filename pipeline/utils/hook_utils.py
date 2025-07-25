@@ -58,7 +58,7 @@ def caa_add_hook(direction: Tensor, multiplier = 1):
             return activation
     return hook_fn
 
-def get_direction_ablation_input_pre_hook(direction: Tensor, 
+def get_affine_direction_ablation_input_pre_hook(direction: Tensor, 
                                           reference: Tensor | None = None, 
                                           coeff: Tensor| None = None):
     def hook_fn(module, input):
@@ -94,9 +94,8 @@ def get_direction_ablation_input_pre_hook(direction: Tensor,
             return activation
     return hook_fn
 
-def get_direction_ablation_output_hook(direction: Tensor, 
-                                        reference: Tensor | None = None, 
-                                        coeff: Tensor| None = None):
+def get_affine_direction_ablation_output_hook(direction: Tensor, 
+                                        reference: Tensor | None = None):
     def hook_fn(module, input, output):
         nonlocal direction, reference, coeff
 
@@ -122,7 +121,7 @@ def get_direction_ablation_output_hook(direction: Tensor,
         proj_ref = (reference @ normalized_direction).unsqueeze(-1) * normalized_direction  # proj_r(r^-)
 
         # Apply affine transformation
-        activation = activation - proj_v + proj_ref + coeff * direction
+        activation = activation - proj_v + proj_ref + direction
 
         if isinstance(output, tuple):
             return (activation, *output[1:])
@@ -131,56 +130,8 @@ def get_direction_ablation_output_hook(direction: Tensor,
 
     return hook_fn
 
-def get_all_direction_ablation_hooks_2(
-    model_base,
-    direction: List[Float[Tensor, 'd_model']],
-    reference: Float[Tensor, "d_model"] | None = None
-):
 
-    if reference is None:
-        reference = torch.zeros_like(direction[0])
-
-    post_attn_ablation_dir = direction[0]
-    post_mlp_ablation_dir = direction[1]
-
-
-    fwd_pre_hooks = [(model_base.model_post_attn_modules[layer], get_direction_ablation_input_pre_hook(direction=post_attn_ablation_dir, reference = reference)) for layer in range(model_base.model.config.num_hidden_layers)]
-    fwd_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_output_hook(direction=post_mlp_ablation_dir, reference = reference)) for layer in range(model_base.model.config.num_hidden_layers)]
-
-    return fwd_pre_hooks, fwd_hooks
-
-def get_all_direction_ablation_hooks(
-    model_base,
-    direction: Float[Tensor, 'd_model'],
-):
-    fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
-    fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
-    fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
-
-    return fwd_pre_hooks, fwd_hooks
-
-def get_directional_patching_input_pre_hook(direction: Float[Tensor, "d_model"], coeff: Float[Tensor, ""]):
-    def hook_fn(module, input):
-        nonlocal direction
-
-        if isinstance(input, tuple):
-            activation: Float[Tensor, "batch_size seq_len d_model"] = input[0]
-        else:
-            activation: Float[Tensor, "batch_size seq_len d_model"] = input
-
-
-        direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
-        direction = direction.to(activation) 
-        activation -= (activation @ direction).unsqueeze(-1) * direction 
-        activation += coeff * direction
-
-        if isinstance(input, tuple):
-            return (activation, *input[1:])
-        else:
-            return activation
-    return hook_fn
-
-def get_activation_addition_input_pre_hook(
+def get_affine_activation_addition_input_pre_hook(
     direction: Float[Tensor, "d_model"], 
     coeff: Float[Tensor, ""], 
     reference: Float[Tensor, "d_model"] | None = None
@@ -221,7 +172,7 @@ def get_activation_addition_input_pre_hook(
     return hook_fn
 
 
-def get_activation_addition_input_post_hook(
+def get_affine_activation_addition_input_post_hook(
     direction: Float[Tensor, "d_model"], 
     coeff: Float[Tensor, ""], 
     reference: Float[Tensor, "d_model"] | None = None
@@ -269,4 +220,74 @@ def get_activation_addition_input_post_hook(
             # Apply affine transformation
             modified_activation = activation - proj_v + proj_ref + coeff * direction
             return modified_activation
+    return hook_fn
+
+    
+def get_linear_direction_ablation_input_pre_hook(direction: Tensor):
+    def hook_fn(module, input):
+        nonlocal direction
+
+        if isinstance(input, tuple):
+            activation: Float[Tensor, "batch_size seq_len d_model"] = input[0]
+        else:
+            activation: Float[Tensor, "batch_size seq_len d_model"] = input
+
+        direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
+        direction = direction.to(activation) 
+        activation -= (activation @ direction).unsqueeze(-1) * direction 
+
+        if isinstance(input, tuple):
+            return (activation, *input[1:])
+        else:
+            return activation
+    return hook_fn
+
+def get_linear_direction_ablation_output_hook(direction: Tensor):
+    def hook_fn(module, input, output):
+        nonlocal direction
+
+        if isinstance(output, tuple):
+            activation: Float[Tensor, "batch_size seq_len d_model"] = output[0]
+        else:
+            activation: Float[Tensor, "batch_size seq_len d_model"] = output
+
+        direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)
+        direction = direction.to(activation)
+        activation -= (activation @ direction).unsqueeze(-1) * direction 
+
+        if isinstance(output, tuple):
+            return (activation, *output[1:])
+        else:
+            return activation
+
+    return hook_fn
+
+def get_all_linear_direction_ablation_hooks(
+    model_base,
+    direction: Float[Tensor, 'd_model'],
+):
+    fwd_pre_hooks = [(model_base.model_block_modules[layer], get_linear_direction_ablation_input_pre_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
+    fwd_hooks = [(model_base.model_attn_modules[layer], get_linear_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
+    fwd_hooks += [(model_base.model_mlp_modules[layer], get_linear_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
+
+    return fwd_pre_hooks, fwd_hooks
+
+
+def get_linear_activation_addition_input_pre_hook(vector: Float[Tensor, "d_model"], coeff: Float[Tensor, ""]):
+    def hook_fn(module, input):
+        nonlocal vector, coeff
+
+        if isinstance(input, tuple):
+            activation: Float[Tensor, "batch_size seq_len d_model"] = input[0]
+        else:
+            activation: Float[Tensor, "batch_size seq_len d_model"] = input
+
+        vector = vector.to(activation)
+        coeff = coeff.to(activation)
+        activation += coeff * vector
+
+        if isinstance(input, tuple):
+            return (activation, *input[1:])
+        else:
+            return activation
     return hook_fn

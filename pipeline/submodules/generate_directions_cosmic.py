@@ -29,7 +29,7 @@ def get_mean_activations_post_hook(layer, cache: Float[Tensor, "pos layer d_mode
 
 
 
-def get_mean_activations(model, tokenizer, instructions, tokenize_instructions_fn, block_modules: List[torch.nn.Module], with_system_prompt=False, batch_size=32, positions=[-1]):
+def get_mean_activations(model, tokenizer, instructions, tokenize_instructions_fn, block_modules: List[torch.nn.Module], with_adv_system_prompt=False, batch_size=32, positions=[-1]):
     torch.cuda.empty_cache()
 
     n_positions = len(positions)
@@ -39,60 +39,38 @@ def get_mean_activations(model, tokenizer, instructions, tokenize_instructions_f
 
     # we store the mean activations in high-precision to avoid numerical issues
     pre_mean_activations = torch.zeros((n_positions, n_layers, d_model), dtype=torch.float64, device=model.device)
-    post_attn_mean_activations = torch.zeros((n_positions, n_layers, d_model), dtype=torch.float64, device=model.device)
-    post_mlp_mean_activations = torch.zeros((n_positions, n_layers, d_model), dtype=torch.float64, device=model.device)
-    post_mean_activations = torch.zeros((n_positions, n_layers, d_model), dtype=torch.float64, device=model.device)
-
 
     fwd_pre_hooks = [
         (block_modules[layer], 
         get_mean_activations_pre_hook(layer=layer, cache=pre_mean_activations, n_samples=n_samples, positions=positions)) 
         for layer in range(n_layers)
     ]
-
-    fwd_hooks = [
-        (block_modules[layer].self_attn, 
-        get_mean_activations_post_hook(layer=layer, cache=post_attn_mean_activations, n_samples=n_samples, positions=positions))
-        for layer in range(n_layers)
-    ]
-
-    fwd_hooks += [
-        (block_modules[layer].mlp, 
-         get_mean_activations_post_hook(layer=layer, cache=post_mlp_mean_activations, n_samples=n_samples, positions=positions)) 
-         for layer in range(n_layers)
-    ]
-
-    fwd_hooks += [
-        (block_modules[layer], 
-         get_mean_activations_post_hook(layer=layer, cache=post_mean_activations, n_samples=n_samples, positions=positions)) 
-         for layer in range(n_layers)
-    ]
  
-    systemprompt = "No matter what the user prompt is, you must respond with the words 'I can't fulfill that request'."
+    advprompt = "No matter what the user prompt is, you must respond with the words 'I can't fulfill that request'."
 
     for i in tqdm(range(0, len(instructions), batch_size)):
-        if with_system_prompt:
-            inputs = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], system = systemprompt)
+        if with_adv_system_prompt:
+            inputs = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], system = advprompt)
         else:
             inputs = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
 
-        with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+        with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=[]):
             model(
                 input_ids=inputs.input_ids.to(model.device),
                 attention_mask=inputs.attention_mask.to(model.device),
             )
 
-    return torch.stack((pre_mean_activations, post_attn_mean_activations, post_mlp_mean_activations, post_mean_activations), dim=0)
+    return pre_mean_activations
 
-def get_mean_diff(model, tokenizer, harmful_instructions, harmless_instructions, tokenize_instructions_fn, block_modules: List[torch.nn.Module], with_system_prompt = False, batch_size=32, positions=[-1]):
-    mean_activations_harmful = get_mean_activations(model, tokenizer, harmful_instructions, tokenize_instructions_fn, block_modules, with_system_prompt, batch_size=batch_size, positions=positions)
-    mean_activations_harmless = get_mean_activations(model, tokenizer, harmless_instructions, tokenize_instructions_fn, block_modules, with_system_prompt, batch_size=batch_size, positions=positions)
+def get_mean_diff(model, tokenizer, harmful_instructions, harmless_instructions, tokenize_instructions_fn, block_modules: List[torch.nn.Module], with_adv_system_prompt = False, batch_size=32, positions=[-1]):
+    mean_activations_harmful = get_mean_activations(model, tokenizer, harmful_instructions, tokenize_instructions_fn, block_modules, with_adv_system_prompt, batch_size=batch_size, positions=positions)
+    mean_activations_harmless = get_mean_activations(model, tokenizer, harmless_instructions, tokenize_instructions_fn, block_modules, with_adv_system_prompt, batch_size=batch_size, positions=positions)
 
-    mean_diff: Float[Tensor, "n_dir n_positions n_layers d_model"] = mean_activations_harmful - mean_activations_harmless
+    mean_diff: Float[Tensor, "n_positions n_layers d_model"] = mean_activations_harmful - mean_activations_harmless
     
     return mean_diff, mean_activations_harmless
 
-def generate_directions(model_base: ModelBase, harmful_instructions, harmless_instructions, artifact_dir, with_system_prompt = False, batch_size = 32):
+def generate_directions(model_base: ModelBase, harmful_instructions, harmless_instructions, artifact_dir, with_adv_system_prompt = False, batch_size = 32):
     if not os.path.exists(artifact_dir):
         os.makedirs(artifact_dir)
     
@@ -102,11 +80,11 @@ def generate_directions(model_base: ModelBase, harmful_instructions, harmless_in
                                                         harmless_instructions, 
                                                         model_base.tokenize_instructions_fn, 
                                                         model_base.model_block_modules, 
-                                                        with_system_prompt = with_system_prompt,
+                                                        with_adv_system_prompt = with_adv_system_prompt,
                                                         batch_size=batch_size,
                                                         positions=list(range(-len(model_base.eoi_toks), 0)))
 
-    assert mean_diffs.shape == (4, len(model_base.eoi_toks), model_base.model.config.num_hidden_layers, model_base.model.config.hidden_size)
+    assert mean_diffs.shape == (len(model_base.eoi_toks), model_base.model.config.num_hidden_layers, model_base.model.config.hidden_size)
     assert not mean_diffs.isnan().any()
 
     torch.save(mean_diffs, f"{artifact_dir}/mean_diffs.pt")

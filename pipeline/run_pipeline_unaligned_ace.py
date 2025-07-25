@@ -226,53 +226,26 @@ def run_pipeline(model_path):
     print("Layers to evaluate are", layers_to_evaluate)
     
     # 2. Select the most effective refusal direction
-    pos, layer, direction, harmless_reference, ablation_enhance_coeff  = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, layers_to_evaluate)
+    pos, layer, pre_layer_direction, pre_layer_reference, ablation_enhance_coeff  = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, layers_to_evaluate)
 
     baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
-
-    pre_layer_direction = direction[0]
-    post_attn_direction = direction[1]
-    post_mlp_direction = direction[2]
-    post_layer_direction = direction[3]
-
-    pre_layer_reference = harmless_reference[0]
-    post_attn_reference = harmless_reference[1]
-    post_mlp_reference = harmless_reference[2]
-    post_layer_reference = harmless_reference[3]
     
-    coeff = torch.Tensor([0])
-
-    first_ablation_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
-    #ablation_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_direction_ablation_output_hook(direction=post_attn_direction, coeff = coeff, reference = post_attn_reference))]
-    #ablation_fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=post_mlp_direction, coeff = coeff, reference = post_mlp_reference))]
-    first_ablation_fwd_hooks = []#[(model_base.model_block_modules[layer], get_direction_ablation_output_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
-
-
-    coeff = torch.Tensor([ablation_enhance_coeff])
-    actadd_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
-    #actadd_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_activation_addition_input_post_hook(direction=post_attn_direction, coeff = coeff, reference = post_attn_reference))]
-    #actadd_fwd_hooks += [(model_base.model_mlp_modules[layer], get_activation_addition_input_post_hook(direction=post_mlp_direction, coeff = coeff, reference = post_mlp_reference))]
-    actadd_fwd_hooks = []#[(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
+    first_ablation_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=pre_layer_direction, reference = pre_layer_reference))]
+    first_ablation_fwd_hooks = []
     
-    
+    coeff = torch.Tensor([1])
+    actadd_refusal_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
+    actadd_refusal_hooks = []
+
     # 3a. Generate and save completions on harmful evaluation datasets
     harmful_test = random.sample(load_dataset_split(harmtype='harmful', split='test'), cfg.n_test)
-
     generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline_first', 'harmful', dataset = harmful_test)
     generate_and_save_completions_for_dataset(cfg, model_base, first_ablation_fwd_pre_hooks, first_ablation_fwd_hooks, 'ablation_first', 'harmful', dataset = harmful_test)
-
-    
 
 
     # 4a. Generate and save completions on harmless evaluation dataset
     harmless_test = random.sample(load_dataset_split(harmtype='harmless', split='test'), cfg.n_test)
-
     generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmless', dataset=harmless_test)
-    
-    coeff = torch.Tensor([1])
-    actadd_refusal_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
-    actadd_refusal_hooks = []#[(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
-    
     generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, 'actadd', 'harmless', dataset=harmless_test)
 
     with add_hooks(module_forward_pre_hooks=first_ablation_fwd_pre_hooks, module_forward_hooks=first_ablation_fwd_hooks):
@@ -290,54 +263,33 @@ def run_pipeline(model_path):
         
 
         # 2. Select the most effective refusal direction
-        pos, layer, direction, harmless_reference, ablation_enhance_coeff  = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, layers_to_evaluate)
+        pos, layer, pre_layer_direction, pre_layer_reference, ablation_enhance_coeff  = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, layers_to_evaluate)
 
         baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
-
-        pre_layer_direction = direction[0]
-        post_attn_direction = direction[1]
-        post_mlp_direction = direction[2]
-        post_layer_direction = direction[3]
-
-        pre_layer_reference = harmless_reference[0]
-        post_attn_reference = harmless_reference[1]
-        post_mlp_reference = harmless_reference[2]
-        post_layer_reference = harmless_reference[3]
         
         coeff = torch.Tensor([0])
 
         ablation_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
-        #ablation_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_direction_ablation_output_hook(direction=post_attn_direction, coeff = coeff, reference = post_attn_reference))]
-        #ablation_fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=post_mlp_direction, coeff = coeff, reference = post_mlp_reference))]
-        ablation_fwd_hooks = []#[(model_base.model_block_modules[layer], get_direction_ablation_output_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
-
+        ablation_fwd_hooks = []
 
         coeff = torch.Tensor([ablation_enhance_coeff])
         actadd_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
-        #actadd_fwd_hooks = [(model_base.model_post_attn_modules[layer], get_activation_addition_input_post_hook(direction=post_attn_direction, coeff = coeff, reference = post_attn_reference))]
-        #actadd_fwd_hooks += [(model_base.model_mlp_modules[layer], get_activation_addition_input_post_hook(direction=post_mlp_direction, coeff = coeff, reference = post_mlp_reference))]
-        actadd_fwd_hooks = []#[(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
-        
-        
+        actadd_fwd_hooks = []
+
         # 3a. Generate and save completions on harmful evaluation datasets
         harmful_test = random.sample(load_dataset_split(harmtype='harmful', split='test'), cfg.n_test)
-
         generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmful', dataset = harmful_test)
         generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', 'harmful', dataset = harmful_test)
-        generate_and_save_completions_for_dataset(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd', 'harmful', dataset = harmful_test)
-
-
 
         # 4a. Generate and save completions on harmless evaluation dataset
         harmless_test = random.sample(load_dataset_split(harmtype='harmless', split='test'), cfg.n_test)
-
         generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmless', dataset=harmless_test)
         
         for alpha in range(1, 4):
             coeff = torch.Tensor([alpha])
             actadd_refusal_pre_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
-            actadd_refusal_hooks = []#[(model_base.model_block_modules[layer], get_activation_addition_input_post_hook(direction=post_layer_direction, coeff = coeff, reference = post_layer_reference))]
-            
+            actadd_refusal_hooks = []
+
             generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, f'actadd_{alpha}', 'harmless', dataset=harmless_test)
             generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, f'actadd_{alpha}', "harmful", dataset=harmful_test)
 
@@ -363,7 +315,6 @@ def run_pipeline(model_path):
     evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
     evaluate_completions_and_save_results_for_dataset(cfg, 'baseline_first', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
     evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
-    evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
     evaluate_completions_and_save_results_for_dataset(cfg, 'ablation_first', "harmful", eval_methodologies=cfg.jailbreak_eval_methodologies)
 
 
