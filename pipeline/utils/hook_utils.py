@@ -97,7 +97,7 @@ def get_affine_direction_ablation_input_pre_hook(direction: Tensor,
 def get_affine_direction_ablation_output_hook(direction: Tensor, 
                                         reference: Tensor | None = None):
     def hook_fn(module, input, output):
-        nonlocal direction, reference, coeff
+        nonlocal direction, reference
 
         if isinstance(output, tuple):
             activation: Float[Tensor, "batch_size seq_len d_model"] = output[0].clone()
@@ -106,12 +106,9 @@ def get_affine_direction_ablation_output_hook(direction: Tensor,
 
         if reference is None:
             reference = torch.zeros_like(activation[0])
-        if coeff is None:
-            coeff = torch.Tensor([0])
 
         direction = direction.to(activation)
         reference = reference.to(activation)
-        coeff = coeff.to(activation)
         
         # Normalize the direction vector
         normalized_direction = direction / (direction.norm(dim=-1, keepdim=True) + 1e-8)

@@ -16,8 +16,14 @@ import torch.nn.functional as F
 
 
 from pipeline.model_utils.model_base import ModelBase
-from pipeline.utils.hook_utils import add_hooks, get_activation_addition_input_pre_hook, get_direction_ablation_input_pre_hook, get_activation_addition_input_post_hook
-
+from pipeline.utils.hook_utils import (
+                                    add_hooks, 
+                                    get_affine_activation_addition_input_pre_hook,  
+                                    get_affine_direction_ablation_input_pre_hook, 
+                                    get_all_linear_direction_ablation_hooks,
+                                    get_linear_activation_addition_input_pre_hook,  
+                                    get_linear_direction_ablation_input_pre_hook
+)           
 
 def refusal_score(
     logits: Float[Tensor, 'batch seq d_vocab_out'],
@@ -132,6 +138,7 @@ def select_direction(
     candidate_directions: Float[Tensor, 'n_dir n_pos n_layer d_model'],
     harmless_mean: Float[Tensor, 'n_dir n_pos n_layer d_model'],
     artifact_dir,
+    affine_steering,
     kl_threshold=0.1, # directions larger KL score are filtered out
     induce_refusal_threshold=None, # directions with a lower inducing refusal score are filtered out
     prune_layer_percentage=0.4, # discard the directions extracted from the last 20% of the model
@@ -140,7 +147,7 @@ def select_direction(
     if not os.path.exists(artifact_dir):
         os.makedirs(artifact_dir)
 
-    n_pos, n_layer, d_model = candidate_directions[0].shape
+    n_pos, n_layer, d_model = candidate_directions.shape
 
     baseline_refusal = 1 #ideally cosine sim 1 to harmless hidden states
     baseline_harmless = 1 #ideally cosine sim 1 to refusal hidden states
@@ -167,11 +174,14 @@ def select_direction(
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing KL for source position {source_pos}"):
 
-            pre_layer_ablation_dir = candidate_directions[source_pos, source_layer]
-            pre_layer_ablation_ref = harmless_mean[source_pos, source_layer]
+            pre_layer_direction = candidate_directions[source_pos, source_layer]
+            pre_layer_reference = harmless_mean[source_pos, source_layer]
 
-            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_direction_ablation_input_pre_hook(direction=pre_layer_ablation_dir, reference=pre_layer_ablation_ref))]
-            fwd_hooks = []
+            if affine_steering:
+                fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_direction, reference = pre_layer_reference))]
+                fwd_hooks = []
+            else: 
+                fwd_pre_hooks, fwd_hooks = get_all_linear_direction_ablation_hooks(model_base, pre_layer_direction)
 
             intervention_logits: Float[Tensor, "n_instructions 1 d_vocab"] = get_last_position_logits(
                 model=model_base.model,
@@ -188,23 +198,33 @@ def select_direction(
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing refusal ablation for source position {source_pos}"):
 
-            pre_layer_ablation_dir = candidate_directions[source_pos, source_layer]
-            pre_layer_ablation_ref = harmless_mean[source_pos, source_layer]
+            pre_layer_direction = candidate_directions[source_pos, source_layer]
+            pre_layer_reference = harmless_mean[source_pos, source_layer]
 
-            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_direction_ablation_input_pre_hook(direction=pre_layer_ablation_dir, reference=pre_layer_ablation_ref))]
-            fwd_hooks = []
+            if affine_steering:
+                fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_direction, reference = pre_layer_reference))]
+                fwd_hooks = []
+            else: 
+                fwd_pre_hooks, fwd_hooks = get_all_linear_direction_ablation_hooks(model_base, pre_layer_direction)
+
             refusal_scores = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
             ablation_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
 
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing refusal addition for source position {source_pos}"):
 
-            pre_layer_ablation_dir = candidate_directions[source_pos, source_layer]
-            pre_layer_ablation_ref = harmless_mean[source_pos, source_layer]
+            pre_layer_direction = candidate_directions[source_pos, source_layer]
+            pre_layer_reference = harmless_mean[source_pos, source_layer]
 
-            coeff = torch.tensor(1.0)
-            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_activation_addition_input_pre_hook(direction=pre_layer_ablation_dir, coeff=coeff, reference=pre_layer_ablation_ref))]
-            fwd_hooks = []
+            if affine_steering:
+                coeff = torch.Tensor([1.0])
+                fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_affine_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
+                fwd_hooks = []
+            else: 
+                fwd_pre_hooks, fwd_hooks = [(model_base.model_block_modules[source_layer], 
+                                                        get_linear_activation_addition_input_pre_hook(vector=pre_layer_direction, 
+                                                        coeff=torch.Tensor([1.0])))], []
+
 
             refusal_scores = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
             steering_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()

@@ -4,8 +4,10 @@ import json
 import os
 import argparse
 import numpy as np
+from tqdm import tqdm
 
 from dataset.load_dataset import load_dataset_split, load_dataset
+
 
 from pipeline.config import Config
 from pipeline.model_utils.model_factory import construct_model_base
@@ -30,11 +32,14 @@ from pipeline.submodules.completions_helper import (
 
 
 def parse_arguments():
-    """Parse command-line arguments for model path and steering mode."""
     parser = argparse.ArgumentParser(description="Run COSMIC pipeline.")
     parser.add_argument('--model_path', type=str, required=True, help='Path to the model')
-    parser.add_argument("--affine_steering", type=bool, default=True, help="Use affine (True) or linear (False) steering")
-    return parser.parse_args()
+    parser.add_argument('--affine_steering', type=str, choices=["true", "false"], default="true", help="Use affine (true) or linear (false) steering")
+    args = parser.parse_args()
+
+    # Manually convert string to actual bool
+    args.affine_steering = args.affine_steering.lower() == "true"
+    return args
 
 
 def load_and_sample_datasets(cfg):
@@ -66,7 +71,7 @@ def generate_and_save_candidate_directions(cfg, model_base, harmful_train, harml
 
     return mean_diffs, harmless_mean
 
-def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, layers_to_evaluate):
+def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, layers_to_evaluate, affine_steering):
     """Select and save the direction."""
     if not os.path.exists(os.path.join(cfg.artifact_path(), 'select_direction')):
         os.makedirs(os.path.join(cfg.artifact_path(), 'select_direction'))
@@ -78,6 +83,7 @@ def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candid
         candidate_directions,
         harmless_mean,
         layers_to_evaluate,
+        affine_steering = affine_steering,
         artifact_dir=os.path.join(cfg.artifact_path(), "select_direction")
     )
     
@@ -132,7 +138,7 @@ def evaluate_loss_for_datasets(cfg, model_base, fwd_pre_hooks, fwd_hooks, interv
     with open(f'{cfg.artifact_path()}/loss_evals/{intervention_label}_loss_eval.json', "w") as f:
         json.dump(loss_evals, f, indent=4)
 
-def compute_and_save_similarity(model, cfg, harmful_data, harmless_data, tokenize_fn, fwd_pre_hooks=[], fwd_hooks=[], batch_size=32, system_prompt = None,fraction = 0.10, use_existing = False):
+def compute_and_save_similarity(model, cfg, harmful_data, harmless_data, tokenize_fn, fwd_pre_hooks=[], fwd_hooks=[], batch_size=32, system_prompt = None,fraction = 0.10):
     """
     Computes cosine similarity between mean activations of harmful and harmless data for each layer
     and returns the layers ranked by the least similarities.
@@ -145,12 +151,6 @@ def compute_and_save_similarity(model, cfg, harmful_data, harmless_data, tokeniz
 
     save_path = f'{cfg.artifact_path()}/select_direction/COSMIC_evaluation_layers.json'
     
-    if use_existing and os.path.exists(save_path):
-            with open(save_path, "r") as f:
-                saved_metadata = json.load(f)
-                ranked_layers = saved_metadata["ranked_layers"]
-
-                return ranked_layers[:int(fraction * num_hidden_layers)]
 
     # Initialize tensors to store outputs
     harmful_outputs = torch.zeros((len(harmful_data), num_hidden_layers, model.config.hidden_size), device=model.device)
@@ -211,15 +211,23 @@ def run_pipeline(model_path, affine_steering):
     # 1. Generate candidate refusal directions
     candidate_directions, harmless_mean = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train)
     
+    layers_to_evaluate = compute_and_save_similarity(model_base.model,
+                                                    cfg, 
+                                                    harmful_train, 
+                                                    harmless_train,
+                                                    model_base.tokenize_instructions_fn, 
+                                                    fwd_pre_hooks=[], 
+                                                    fwd_hooks=[])
+
     # 2. Select the most effective refusal direction
-    pos, layer, pre_layer_direction, pre_layer_reference  = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean)
+    pos, layer, pre_layer_direction, pre_layer_reference  = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, layers_to_evaluate, affine_steering)
 
 
     #3.construct hooks
     baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
 
     if affine_steering:
-        ablation_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_direction, reference = pre_layer_ablation_ref))]
+        ablation_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_direction, reference = pre_layer_reference))]
         ablation_fwd_hooks = []
 
         coeff = torch.Tensor([1.0])
@@ -244,12 +252,12 @@ def run_pipeline(model_path, affine_steering):
     generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmless', dataset=harmless_test)
     generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_fwd_hooks, 'actadd', 'harmless', dataset=harmless_test)
 
-    evaluate_gpqa_and_arc(cfg, model_base, 
+    """evaluate_gpqa_and_arc(cfg, model_base, 
                            ablation_fwd_pre_hooks, 
                            ablation_fwd_hooks, 
                            exclude_base = True,
                            batch_size = 32)
-    evaluate_truthful_qa(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, batch_size = 8)
+    evaluate_truthful_qa(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, batch_size = 8)"""
     
     
 

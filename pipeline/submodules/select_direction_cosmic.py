@@ -205,7 +205,7 @@ def select_direction(
     if not os.path.exists(artifact_dir):
         os.makedirs(artifact_dir)
 
-    n_pos, n_layer, d_model = candidate_directions[0].shape
+    n_pos, n_layer, d_model = candidate_directions.shape
 
     baseline_activations_harmful = get_baseline_vector(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_hooks=[], batch_size=batch_size)
     baseline_activations_harmless = get_baseline_vector(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_hooks=[], batch_size=batch_size)
@@ -230,14 +230,14 @@ def select_direction(
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing KL for source position {source_pos}"):
 
-            pre_layer_reference = candidate_directions[source_pos, source_layer]
+            pre_layer_direction = candidate_directions[source_pos, source_layer]
             pre_layer_reference = harmless_mean[source_pos, source_layer]
 
             if affine_steering:
-                fwd_pre_hooks = [(model_base.model_block_modules[layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_ablation_dir, reference = pre_layer_reference))]
+                fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_direction, reference = pre_layer_reference))]
                 fwd_hooks = []
             else: 
-                fwd_pre_hooks, fwd_hooks = get_all_linear_direction_ablation_hooks(model_base, pre_layer_ablation_dir)
+                fwd_pre_hooks, fwd_hooks = get_all_linear_direction_ablation_hooks(model_base, pre_layer_direction)
 
             
             intervention_logits: Float[Tensor, "n_instructions 1 d_vocab"] = get_last_position_logits(
@@ -255,14 +255,14 @@ def select_direction(
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing refusal ablation for source position {source_pos}"):
 
-            pre_layer_ablation_dir = candidate_directions[source_pos, source_layer]
+            pre_layer_direction = candidate_directions[source_pos, source_layer]
             pre_layer_reference = harmless_mean[source_pos, source_layer]
 
             if affine_steering:
-                fwd_pre_hooks = [(model_base.model_block_modules[layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_ablation_dir, reference = pre_layer_reference))]
+                fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_direction, reference = pre_layer_reference))]
                 fwd_hooks = []
             else: 
-                fwd_pre_hooks, fwd_hooks = get_all_linear_direction_ablation_hooks(model_base, pre_layer_ablation_dir)
+                fwd_pre_hooks, fwd_hooks = get_all_linear_direction_ablation_hooks(model_base, pre_layer_direction)
 
             refusal_scores = get_refusal_similarity(model_base.model, harmful_instructions, baseline_activations_harmless, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
             ablation_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
@@ -270,20 +270,18 @@ def select_direction(
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing refusal addition for source position {source_pos}"):
 
-            pre_layer_ablation_dir = candidate_directions[source_pos, source_layer]
+            pre_layer_direction = candidate_directions[source_pos, source_layer]
             pre_layer_reference = harmless_mean[source_pos, source_layer]
 
             if affine_steering:
                 coeff = torch.Tensor([1.0])
-                fwd_pre_hooks = [(model_base.model_block_modules[layer], get_affine_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
+                fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_affine_activation_addition_input_pre_hook(direction=pre_layer_direction, coeff = coeff, reference = pre_layer_reference))]
                 fwd_hooks = []
             else: 
-                fwd_pre_hooks, fwd_hooks = [(model_base.model_block_modules[layer], 
+                fwd_pre_hooks, fwd_hooks = [(model_base.model_block_modules[source_layer], 
                                                         get_linear_activation_addition_input_pre_hook(vector=pre_layer_direction, 
                                                         coeff=torch.Tensor([1.0])))], []
 
-            fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_activation_addition_input_pre_hook(direction=pre_layer_ablation_dir, coeff = coeff, reference = pre_layer_reference))]
-            fwd_hooks = []
 
             refusal_scores = get_refusal_similarity(model_base.model, harmless_instructions, baseline_activations_harmful, model_base.tokenize_instructions_fn, layers_to_evaluate, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
             steering_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()

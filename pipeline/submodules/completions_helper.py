@@ -2,7 +2,7 @@ import os
 import json
 from typing import Optional
 
-from pipeline.submodules.evaluate_jailbreak import evaluate_jailbreak, unload_llamaguard3_model
+from pipeline.submodules.evaluate_jailbreak import evaluate_jailbreak
 from dataset.load_dataset import load_dataset_split, load_dataset
 
 def generate_and_save_completions_for_dataset(cfg, model_base, fwd_pre_hooks, fwd_hooks, intervention_label, dataset_name, batch_size = 64, dataset=None, save_path : str = None, use_existing: bool = False):
@@ -24,7 +24,7 @@ def generate_and_save_completions_for_dataset(cfg, model_base, fwd_pre_hooks, fw
     with open(f'{cfg.artifact_path()}/{folder_name}/{dataset_name}_{intervention_label}_completions.json', "w") as f:
         json.dump(completions, f, indent=4)
 
-def evaluate_completions_and_save_results_for_dataset(cfg, intervention_label, dataset_name, eval_methodologies, target_categories=None, save_path = False, use_existing = False):
+def evaluate_completions_and_save_results_for_dataset(cfg, intervention_label, dataset_name, eval_methodologies, save_path = False, use_existing = False):
     """Evaluate completions and save results for a dataset."""
 
     folder_name = save_path if save_path else "completions"
@@ -39,7 +39,6 @@ def evaluate_completions_and_save_results_for_dataset(cfg, intervention_label, d
         completions=completions,
         methodologies=eval_methodologies,
         evaluation_path=os.path.join(cfg.artifact_path(), folder_name, f"{dataset_name}_{intervention_label}_evaluations.json"),
-        target_categories = target_categories
     )
 
     with open(f'{cfg.artifact_path()}/{folder_name}/{dataset_name}_{intervention_label}_evaluations.json', "w") as f:

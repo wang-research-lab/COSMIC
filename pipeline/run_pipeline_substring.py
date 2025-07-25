@@ -3,25 +3,41 @@ import random
 import json
 import os
 import argparse
+from tqdm import tqdm
 
 from dataset.load_dataset import load_dataset_split, load_dataset
 
 from pipeline.config import Config
 from pipeline.model_utils.model_factory import construct_model_base
-from pipeline.utils.hook_utils import get_affine_activation_addition_input_pre_hook, get_affine_direction_ablation_input_pre_hook
+from pipeline.utils.hook_utils import (
+    add_hooks, 
+    get_affine_activation_addition_input_pre_hook,  
+    get_affine_direction_ablation_input_pre_hook, 
+    get_all_linear_direction_ablation_hooks,
+    get_linear_activation_addition_input_pre_hook,  
+    get_linear_direction_ablation_input_pre_hook
+)           
 
 from pipeline.submodules.generate_directions_cosmic import generate_directions
 from pipeline.submodules.select_direction_substring import select_direction, get_refusal_scores
 from pipeline.submodules.evaluate_jailbreak import evaluate_jailbreak
 from pipeline.submodules.evaluate_loss import evaluate_loss
 from pipeline.submodules.evaluate_reasoning import evaluate_gpqa_and_arc, evaluate_truthful_qa
-import hashlib
+from pipeline.submodules.completions_helper import (
+    generate_and_save_completions_for_dataset,
+    evaluate_completions_and_save_results_for_dataset
+)
+
 
 def parse_arguments():
-    """Parse model path argument from command line."""
-    parser = argparse.ArgumentParser(description="Parse model path argument.")
+    parser = argparse.ArgumentParser(description="Run COSMIC pipeline.")
     parser.add_argument('--model_path', type=str, required=True, help='Path to the model')
-    return parser.parse_args()
+    parser.add_argument('--affine_steering', type=str, choices=["true", "false"], default="true", help="Use affine (true) or linear (false) steering")
+    args = parser.parse_args()
+
+    # Manually convert string to actual bool
+    args.affine_steering = args.affine_steering.lower() == "true"
+    return args
 
 def load_and_sample_datasets(cfg):
     """
@@ -113,7 +129,8 @@ def evaluate_loss_for_datasets(cfg, model_base, fwd_pre_hooks, fwd_hooks, interv
         json.dump(loss_evals, f, indent=4)
 
 
-def run_pipeline(model_path):
+
+def run_pipeline(model_path, affine_steering):
     """Run the full pipeline."""
     model_alias = os.path.basename(model_path) + f"-substring-{'ace' if affine_steering else 'lce'}"
     cfg = Config(model_alias=model_alias, model_path=model_path)
@@ -122,21 +139,19 @@ def run_pipeline(model_path):
     
     # Load and sample datasets
     harmful_train, harmless_train, harmful_val, harmless_val = load_and_sample_datasets(cfg)
-    
-    # Filter datasets based on refusal scores
-    harmful_train, harmless_train, harmful_val, harmless_val = filter_data(cfg, model_base, harmful_train, harmless_train, harmful_val, harmless_val)
-
 
     # 1. Generate candidate refusal directions
     candidate_directions, harmless_mean = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train)
-    
-    # 2. Select the most effective refusal direction
-    pos, layer, pre_layer_direction, pre_layer_reference  = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, affine_steering = affine_steering)
 
+    # 2. Select the most effective refusal direction
+    pos, layer, pre_layer_direction, pre_layer_reference  = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, harmless_mean, affine_steering)
+
+
+    #3.construct hooks
     baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
 
     if affine_steering:
-        ablation_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_direction, reference = pre_layer_ablation_ref))]
+        ablation_fwd_pre_hooks = [(model_base.model_block_modules[layer], get_affine_direction_ablation_input_pre_hook(direction=pre_layer_direction, reference = pre_layer_reference))]
         ablation_fwd_hooks = []
 
         coeff = torch.Tensor([1.0])
@@ -162,12 +177,12 @@ def run_pipeline(model_path):
     generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_fwd_hooks, 'actadd', 'harmless', dataset=harmless_test)
 
 
-    evaluate_gpqa_and_arc(cfg, model_base, 
+    """evaluate_gpqa_and_arc(cfg, model_base, 
                            ablation_fwd_pre_hooks, 
                            ablation_fwd_hooks, 
                            exclude_base = True,
                            batch_size = 32)
-    evaluate_truthful_qa(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, batch_size = 8)
+    evaluate_truthful_qa(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, batch_size = 8)"""
 
 
     #we load in llamaguard now for evals
@@ -186,5 +201,5 @@ def run_pipeline(model_path):
 
 if __name__ == "__main__":
     args = parse_arguments()
-    run_pipeline(model_path=args.model_path)
+    run_pipeline(model_path=args.model_path, affine_steering = args.affine_steering)
     torch.cuda.empty_cache()
