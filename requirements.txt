@@ -1,0 +1,10 @@
+accelerate==0.31.0
+datasets==2.19.2
+einops==0.8.1
+jaxtyping==0.3.2
+matplotlib==3.10.3
+numpy==2.2.6
+pandas==2.2.3
+torch==2.3.0
+tqdm==4.66.4
+transformers==4.51.0
